@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; media-src 'self' file:; img-src 'self' data:"
+    />
+    <title>OPTCG Recorder</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header id="bar">
+      <div class="brand">OPTCG Recorder</div>
+      <div id="state" class="state idle"><span class="dot"></span><span id="stateText">Idle</span></div>
+      <button id="recBtn">Record now</button>
+      <label class="chk"><input type="checkbox" id="autoRec" /> Auto-record games</label>
+      <select id="capture" title="What to record"></select>
+      <button id="folderBtn" class="ghost" title="OPTCG Sim log folder">Sim folder…</button>
+      <button id="libBtn" class="ghost">Open library folder</button>
+    </header>
+    <div id="error" hidden></div>
+
+    <main>
+      <aside id="side">
+        <input id="search" type="search" placeholder="Search: opp:luffy 2nd win, leader:enel, vs:name, notes…" />
+        <div id="chips"></div>
+        <div id="count"></div>
+        <ul id="list"></ul>
+      </aside>
+
+      <section id="viewer">
+        <div id="empty" class="empty">
+          <h2>No game selected</h2>
+          <p>Start a game in OPTCG Sim and it records automatically. Finished games show up on the left.</p>
+          <p id="folderHint"></p>
+        </div>
+        <div id="detail" hidden>
+          <video id="video" controls preload="metadata"></video>
+          <div class="speed">
+            <span>Speed</span>
+            <button data-rate="1">1×</button><button data-rate="1.5">1.5×</button><button data-rate="2">2×</button
+            ><button data-rate="3">3×</button>
+          </div>
+          <div class="meta">
+            <div class="titleRow">
+              <button id="star" class="star" title="Star">☆</button>
+              <h2 id="title"></h2>
+            </div>
+            <div id="facts" class="facts"></div>
+            <div id="tags" class="tags"></div>
+            <label>Your tags <span class="hint">(comma separated)</span></label>
+            <input id="userTags" placeholder="e.g. mulligan, misplay, tournament" />
+            <label>Notes</label>
+            <textarea id="notes" rows="4" placeholder="What happened in this game?"></textarea>
+            <div class="actions">
+              <button id="reveal" class="ghost">Show in folder</button>
+              <button id="del" class="danger">Delete recording</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

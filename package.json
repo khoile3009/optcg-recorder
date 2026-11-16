@@ -1,0 +1,15 @@
+{
+  "name": "optcg-recorder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Records OPTCG Sim games, tags them from the combat log, and plays them back.",
+  "type": "module",
+  "main": "src/main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1"
+  }
+}
