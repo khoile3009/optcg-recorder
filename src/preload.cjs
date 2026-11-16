@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('recorder', {
   listSources: () => ipcRenderer.invoke('app:listSources'),
   setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch),
   chooseSourceDir: () => ipcRenderer.invoke('app:chooseSourceDir'),
+  useSourceDir: (dir) => ipcRenderer.invoke('app:useSourceDir', dir),
   onEvent: (cb) => {
     const l = (_e, ev) => cb(ev)
     ipcRenderer.on('app:event', l)

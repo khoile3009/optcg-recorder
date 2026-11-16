@@ -12,7 +12,7 @@
  *
  * Library layout (userData/recordings):  <id>.webm  <id>.json  <id>.log
  */
-import { app, BrowserWindow, Notification, desktopCapturer, dialog, ipcMain, session, shell } from 'electron'
+import { app, BrowserWindow, Notification, desktopCapturer, dialog, ipcMain, net, protocol, session, shell } from 'electron'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import os from 'node:os'
@@ -53,7 +53,19 @@ async function writeJson(p, v) {
   await fsp.rename(tmp, p)
 }
 
-let settings = { sourceDir: null, capture: 'auto', autoRecord: true, fps: 30, bitrateMbps: 6, ...readJson(settingsPath, {}) }
+/**
+ * Recording quality. Card-game footage is mostly static, so VP9 holds up well
+ * at low bitrates; height caps the captured resolution (aspect is kept).
+ */
+export const QUALITY = {
+  high: { label: 'High · 1080p 30fps', height: 1080, fps: 30, mbps: 5 },
+  balanced: { label: 'Balanced · 720p 30fps', height: 720, fps: 30, mbps: 2.5 },
+  small: { label: 'Small · 720p 15fps', height: 720, fps: 15, mbps: 1.2 },
+  tiny: { label: 'Tiny · 540p 10fps', height: 540, fps: 10, mbps: 0.6 },
+}
+const quality = () => QUALITY[settings.quality] ?? QUALITY.balanced
+
+let settings = { sourceDir: null, capture: 'auto', autoRecord: true, quality: 'balanced', ...readJson(settingsPath, {}) }
 const saveSettings = () => writeJson(settingsPath, settings)
 
 // ─── Sim folder ───────────────────────────────────────────────────────────
@@ -79,9 +91,47 @@ function detectSourceDir() {
   return found[0]?.dir ?? null
 }
 
+/** Only a folder the user confirmed: nothing is watched until they pick one. */
 function sourceDir() {
-  if (settings.sourceDir && fs.existsSync(settings.sourceDir)) return settings.sourceDir
-  return detectSourceDir()
+  return settings.sourceDir && fs.existsSync(settings.sourceDir) ? settings.sourceDir : null
+}
+
+/** The install folder (…/1.31a_Windows) for an AutoSaved path, if it has that shape. */
+function simRoot(dir = sourceDir()) {
+  return dir && path.normalize(dir).toLowerCase().endsWith(AUTOSAVED.toLowerCase())
+    ? path.normalize(dir).slice(0, -AUTOSAVED.length - 1)
+    : null
+}
+
+/**
+ * Accepts the install folder, Builds_Windows, CombatLogs or AutoSaved itself and
+ * returns the AutoSaved path to watch (created if the sim hasn't saved a log yet).
+ */
+function resolveSourceDir(picked) {
+  const p = path.resolve(String(picked))
+  const tries = [
+    [p, AUTOSAVED],
+    [p, 'CombatLogs', 'AutoSaved'],
+    [p, 'AutoSaved'],
+  ]
+  if (path.basename(p).toLowerCase() === 'autosaved' && fs.existsSync(p)) return p
+  for (const t of tries) if (fs.existsSync(path.join(...t))) return path.join(...t)
+  for (const base of [path.join(p, 'Builds_Windows'), p])
+    if (fs.existsSync(path.join(base, 'OPTCGSim_Data'))) {
+      const dir = path.join(base, 'CombatLogs', 'AutoSaved')
+      fs.mkdirSync(dir, { recursive: true })
+      return dir
+    }
+  return null
+}
+
+async function setSourceDir(picked) {
+  const dir = resolveSourceDir(picked)
+  if (!dir) return { ...status(), pickError: `"${picked}" doesn't look like an OPTCG Sim folder (no Builds_Windows/CombatLogs inside).` }
+  settings.sourceDir = dir
+  await saveSettings()
+  ensureWatching()
+  return status()
 }
 
 // ─── Library ──────────────────────────────────────────────────────────────
@@ -170,7 +220,8 @@ async function startRecording({ partial = null, manual = false } = {}) {
     starred: false,
   })
   await ensureRecorderWindow()
-  recorderWin.webContents.send('rec:start', { id, fps: settings.fps, bitrate: settings.bitrateMbps * 1_000_000 })
+  const q = quality()
+  recorderWin.webContents.send('rec:start', { id, fps: q.fps, height: q.height, bitrate: q.mbps * 1_000_000 })
   sendStatus()
   sendLibrary()
 }
@@ -420,9 +471,12 @@ function ensureWatching() {
 function status() {
   return {
     sourceDir: sourceDir(),
+    detectedDir: sourceDir() ? null : detectSourceDir(),
     libDir,
     autoRecord: settings.autoRecord,
     capture: settings.capture,
+    quality: settings.quality,
+    qualities: Object.entries(QUALITY).map(([key, q]) => ({ key, label: q.label, mbPerMin: Math.round((q.mbps * 60) / 8) })),
     recording: rec && { id: rec.id, startMs: rec.startMs, bytes: rec.bytes, manual: rec.manual, stopping: rec.stopping },
     lastError,
   }
@@ -459,25 +513,55 @@ ipcMain.handle('app:listSources', async () => {
 ipcMain.handle('app:setSettings', async (_e, patch) => {
   if (patch.capture != null) settings.capture = String(patch.capture)
   if (patch.autoRecord != null) settings.autoRecord = !!patch.autoRecord
+  if (patch.quality != null && QUALITY[patch.quality]) settings.quality = patch.quality
   await saveSettings()
   sendStatus()
   return status()
 })
 ipcMain.handle('app:chooseSourceDir', async () => {
   const r = await dialog.showOpenDialog(libraryWin, {
-    title: 'Choose OPTCG Sim’s CombatLogs/AutoSaved folder (or the install folder)',
-    defaultPath: sourceDir() ?? os.homedir(),
+    title: 'Choose your OPTCG Sim folder (e.g. 1.31a_Windows)',
+    defaultPath: simRoot() ?? (simRoot(detectSourceDir()) || os.homedir()),
     properties: ['openDirectory'],
   })
-  if (!r.canceled && r.filePaths[0]) {
-    let dir = r.filePaths[0]
-    if (fs.existsSync(path.join(dir, AUTOSAVED))) dir = path.join(dir, AUTOSAVED)
-    settings.sourceDir = dir
-    await saveSettings()
-    ensureWatching()
-  }
-  return status()
+  return !r.canceled && r.filePaths[0] ? setSourceDir(r.filePaths[0]) : status()
 })
+ipcMain.handle('app:useSourceDir', (_e, dir) => setSourceDir(dir))
+
+// ─── Card images ──────────────────────────────────────────────────────────
+// card://img/OP18-022[?small] → the sim's own art when we know its folder (works
+// offline and covers sets the CDN doesn't have yet), else the Limitless CDN art,
+// cached on disk after first use.
+
+const CDN = 'https://limitlesstcg.nyc3.cdn.digitaloceanspaces.com/one-piece'
+const cardDir = path.join(userData, 'cards')
+protocol.registerSchemesAsPrivileged([{ scheme: 'card', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
+
+async function serveCard(req) {
+  const id = decodeURIComponent(new URL(req.url).pathname.slice(1)).toUpperCase()
+  if (!/^[A-Z]+\d*-\d{3}$/.test(id)) return new Response('bad id', { status: 400 })
+  const set = id.split('-')[0]
+  const root = simRoot() ?? simRoot(detectSourceDir())
+  if (root) {
+    const dir = path.join(root, 'Builds_Windows', 'OPTCGSim_Data', 'StreamingAssets', 'Cards', set)
+    const small = new URL(req.url).searchParams.has('small')
+    for (const name of small ? [`${id}_small.jpg`, `${id}.jpg`] : [`${id}.jpg`]) {
+      try {
+        return new Response(await fsp.readFile(path.join(dir, name)), { headers: { 'content-type': 'image/jpeg' } })
+      } catch {}
+    }
+  }
+  const file = path.join(cardDir, `${id}.webp`)
+  try {
+    return new Response(await fsp.readFile(file), { headers: { 'content-type': 'image/webp' } })
+  } catch {}
+  const res = await net.fetch(`${CDN}/${set}/${id}_EN.webp`).catch(() => null)
+  if (!res?.ok) return new Response('not found', { status: 404 })
+  const buf = Buffer.from(await res.arrayBuffer())
+  await fsp.mkdir(cardDir, { recursive: true })
+  await fsp.writeFile(file, buf).catch(() => {})
+  return new Response(buf, { headers: { 'content-type': 'image/webp' } })
+}
 
 // ─── Windows ──────────────────────────────────────────────────────────────
 
@@ -522,6 +606,7 @@ else {
   app.whenReady().then(async () => {
     app.setAppUserModelId('OPTCG Recorder')
     await fsp.mkdir(libDir, { recursive: true })
+    protocol.handle('card', serveCard)
     // Recordings interrupted by a crash or a closed app: mark them, keep the video.
     for (const m of listRecordings()) if (m.status === 'recording') await updateMeta(m.id, { status: 'done', tags: [...(m.tags ?? []), 'interrupted'] })
 

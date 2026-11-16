@@ -129,3 +129,31 @@ export function matchesQuery(rec, query) {
     return hay.includes(t)
   })
 }
+
+/**
+ * Structured library filters (all optional): result 'win'|'loss', order
+ * '1st'|'2nd', starred, me/opp leader ids (any of), userTags (all of), and the
+ * free-text query.
+ */
+export function matchesFilters(rec, f = {}) {
+  if (f.result && rec.winnerSeat !== (f.result === 'win' ? 1 : 2)) return false
+  if (f.order && rec.firstSeat !== (f.order === '1st' ? 1 : 2)) return false
+  if (f.starred && !rec.starred) return false
+  if (f.me?.length && !f.me.includes(rec.me?.leaderId)) return false
+  if (f.opp?.length && !f.opp.includes(rec.opp?.leaderId)) return false
+  const mine = (rec.userTags ?? []).map((t) => t.toLowerCase())
+  if (f.userTags?.length && !f.userTags.every((t) => mine.includes(t.toLowerCase()))) return false
+  return matchesQuery(rec, f.text ?? '')
+}
+
+/** Win/loss record overall and by turn order, for finished games. */
+export function recordStats(recs) {
+  const s = { games: recs.length, wins: 0, losses: 0, first: { wins: 0, losses: 0 }, second: { wins: 0, losses: 0 } }
+  for (const r of recs) {
+    if (!r.winnerSeat) continue
+    const k = r.winnerSeat === 1 ? 'wins' : 'losses'
+    s[k]++
+    if (r.firstSeat) s[r.firstSeat === 1 ? 'first' : 'second'][k]++
+  }
+  return s
+}

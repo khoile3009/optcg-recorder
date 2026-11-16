@@ -10,10 +10,13 @@ function mimeType() {
   return ''
 }
 
-window.capture.onStart(async ({ id, fps, bitrate }) => {
+window.capture.onStart(async ({ id, fps, height, bitrate }) => {
   curId = id
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: fps }, audio: false })
+    const video = { frameRate: { max: fps }, height: { max: height }, width: { max: Math.round((height * 16) / 9) } }
+    stream = await navigator.mediaDevices.getDisplayMedia({ video, audio: false })
+    // Desktop capture can ignore the initial constraints; re-apply to force the downscale.
+    await stream.getVideoTracks()[0].applyConstraints({ ...video, resizeMode: 'crop-and-scale' }).catch(() => {})
     mr = new MediaRecorder(stream, { mimeType: mimeType(), videoBitsPerSecond: bitrate })
     // Chunks must reach main in order; serialize the async buffer reads.
     let chain = Promise.resolve()

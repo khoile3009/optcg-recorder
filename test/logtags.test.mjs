@@ -76,3 +76,65 @@ test('search', () => {
   assert.ok(matchesQuery(rec, 'OP17-039'))
   assert.ok(matchesQuery(rec, 'mulligan misplayed'))
 })
+
+import { matchesFilters, recordStats } from '../src/logtags.mjs'
+import { LEADERS } from '../src/data/leaders.mjs'
+
+test('matchesFilters combines leader, order, result, star, user tags and text', () => {
+  const rec = {
+    me: { name: 'Alice#1', leaderId: 'OP01-001', leaderName: 'Roronoa Zoro' },
+    opp: { name: 'Bob#2', leaderId: 'OP02-001', leaderName: 'Edward Newgate' },
+    firstSeat: 2,
+    winnerSeat: 1,
+    starred: true,
+    tags: ['leader:Roronoa Zoro', 'opp:Edward Newgate', '2nd', 'win'],
+    userTags: ['Locals'],
+  }
+  assert.ok(matchesFilters(rec, {}))
+  assert.ok(matchesFilters(rec, { me: ['OP01-001'], opp: ['OP09-001', 'OP02-001'], order: '2nd', result: 'win', starred: true }))
+  assert.ok(matchesFilters(rec, { userTags: ['locals'], text: 'bob' }))
+  assert.ok(!matchesFilters(rec, { me: ['OP02-001'] }))
+  assert.ok(!matchesFilters(rec, { order: '1st' }))
+  assert.ok(!matchesFilters(rec, { result: 'loss' }))
+  assert.ok(!matchesFilters(rec, { userTags: ['misplay'] }))
+  assert.ok(!matchesFilters({ ...rec, starred: false }, { starred: true }))
+})
+
+test('recordStats splits wins by turn order and skips unfinished games', () => {
+  const s = recordStats([
+    { winnerSeat: 1, firstSeat: 1 },
+    { winnerSeat: 2, firstSeat: 1 },
+    { winnerSeat: 1, firstSeat: 2 },
+    { winnerSeat: null, firstSeat: 2 },
+  ])
+  assert.deepEqual(s, { games: 4, wins: 2, losses: 1, first: { wins: 1, losses: 1 }, second: { wins: 1, losses: 0 } })
+})
+
+test('leader list: unique ids, readable names, known colors', () => {
+  const ids = new Set(LEADERS.map((l) => l.id))
+  assert.equal(ids.size, LEADERS.length)
+  assert.ok(LEADERS.length > 100)
+  const colors = new Set(['Red', 'Green', 'Blue', 'Purple', 'Black', 'Yellow'])
+  for (const l of LEADERS) {
+    assert.match(l.id, /^[A-Z]+\d*-\d{3}$/)
+    assert.ok(l.name && !/\.\S/.test(l.name.replace(/\b[A-Z]\. /g, '')), l.name)
+    assert.ok(l.colors.every((c) => colors.has(c)), `${l.id} ${l.colors}`)
+  }
+})
+
+test('parseLeaders reads Leader records from Unity-serialized card data', async () => {
+  const { parseLeaders } = await import('../scripts/ingest-leaders.mjs')
+  const str = (s) => {
+    const b = Buffer.from(s, 'utf8')
+    const pad = Buffer.alloc((4 - (b.length % 4)) % 4)
+    return Buffer.concat([int(b.length), b, pad])
+  }
+  const int = (...v) => Buffer.concat(v.map((x) => { const b = Buffer.alloc(4); b.writeInt32LE(x); return b }))
+  const rec = (id, type, name, colors) =>
+    Buffer.concat([str(id), str(id), int(7, type), str(name), int(1, 5, 5000, 0, 2, 11, 12, 0, colors.length, ...colors)])
+  const buf = Buffer.concat([Buffer.from('junk'), rec('OP18-022', 0, 'Monkey D. Luffy', [1]), rec('OP18-023', 1, 'Not A Leader', [1]), rec('EB05-010', 0, 'Nico Robin', [1, 5])])
+  assert.deepEqual(parseLeaders(buf), [
+    { id: 'EB05-010', name: 'Nico Robin', colors: ['Green', 'Yellow'], set: 'EB05' },
+    { id: 'OP18-022', name: 'Monkey D. Luffy', colors: ['Green'], set: 'OP18' },
+  ])
+})

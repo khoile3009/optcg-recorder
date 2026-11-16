@@ -4,63 +4,156 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; media-src 'self' file:; img-src 'self' data:"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; media-src 'self' file:; img-src 'self' data: card:"
     />
     <title>OPTCG Recorder</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <header id="bar">
-      <div class="brand">OPTCG Recorder</div>
-      <div id="state" class="state idle"><span class="dot"></span><span id="stateText">Idle</span></div>
-      <button id="recBtn">Record now</button>
-      <label class="chk"><input type="checkbox" id="autoRec" /> Auto-record games</label>
-      <select id="capture" title="What to record"></select>
-      <button id="folderBtn" class="ghost" title="OPTCG Sim log folder">Sim folder…</button>
-      <button id="libBtn" class="ghost">Open library folder</button>
+      <div class="brand"><span class="logo">●</span> OPTCG Recorder</div>
+      <div id="state" class="pill idle"><span class="dot"></span><span id="stateText">Idle</span></div>
+      <div class="grow"></div>
+      <button id="recBtn" class="primary">Record now</button>
+      <button id="settingsBtn" class="icon" title="Settings">⚙</button>
+      <div id="settings" class="popover" hidden>
+        <h3>Recording</h3>
+        <label class="field"
+          >Quality
+          <select id="quality"></select>
+          <span class="hint">Applies to the next recording.</span>
+        </label>
+        <label class="field"
+          >Capture
+          <select id="capture"></select>
+        </label>
+        <label class="toggle"><input type="checkbox" id="autoRec" /><span></span> Auto-record when a game starts</label>
+        <h3>Folders</h3>
+        <div class="row">
+          <button id="folderBtn">OPTCG Sim folder…</button>
+          <button id="libBtn">Open library folder</button>
+        </div>
+        <div id="folderHint" class="hint"></div>
+      </div>
     </header>
     <div id="error" hidden></div>
 
     <main>
       <aside id="side">
-        <input id="search" type="search" placeholder="Search: opp:luffy 2nd win, leader:enel, vs:name, notes…" />
-        <div id="chips"></div>
-        <div id="count"></div>
-        <ul id="list"></ul>
+        <div class="searchWrap"><input id="search" type="search" placeholder="Search leaders, players, notes…" /></div>
+        <div id="stats" class="stats"></div>
+
+        <div class="filters">
+          <div class="seg" data-key="result">
+            <button data-v="">All</button><button data-v="win">Wins</button><button data-v="loss">Losses</button>
+          </div>
+          <div class="seg" data-key="order">
+            <button data-v="">Any</button><button data-v="1st">1st</button><button data-v="2nd">2nd</button>
+          </div>
+          <button id="starFilter" class="seg-single" title="Starred only">★</button>
+        </div>
+
+        <div class="section">
+          <div class="sectionHead"><span>My leader</span><button class="link" data-pick="me">Browse all</button></div>
+          <div class="strip" id="meStrip"></div>
+        </div>
+        <div class="section">
+          <div class="sectionHead"><span>Opponent</span><button class="link" data-pick="opp">Browse all</button></div>
+          <div class="strip" id="oppStrip"></div>
+        </div>
+        <div class="section" id="tagSection">
+          <div class="sectionHead"><span>Your tags</span></div>
+          <div class="cloud" id="tagCloud"></div>
+        </div>
+
+        <div class="listHead"><span id="count"></span><button class="link" id="clearFilters" hidden>Clear filters</button></div>
+        <div id="list"></div>
       </aside>
 
       <section id="viewer">
         <div id="empty" class="empty">
+          <div class="emptyIcon">▶</div>
           <h2>No game selected</h2>
-          <p>Start a game in OPTCG Sim and it records automatically. Finished games show up on the left.</p>
-          <p id="folderHint"></p>
+          <p>Start a game in OPTCG Sim and it records automatically. Finished games appear on the left.</p>
         </div>
         <div id="detail" hidden>
-          <video id="video" controls preload="metadata"></video>
-          <div class="speed">
-            <span>Speed</span>
-            <button data-rate="1">1×</button><button data-rate="1.5">1.5×</button><button data-rate="2">2×</button
-            ><button data-rate="3">3×</button>
+          <div id="banner" class="banner"></div>
+          <div class="player">
+            <video id="video" controls preload="metadata"></video>
+            <div id="live" class="live" hidden>
+              <span class="dot"></span>
+              <div>
+                <b>Recording in progress</b>
+                <p>The video becomes playable as soon as the game ends.</p>
+              </div>
+            </div>
           </div>
-          <div class="meta">
-            <div class="titleRow">
-              <button id="star" class="star" title="Star">☆</button>
-              <h2 id="title"></h2>
+          <div class="toolbar">
+            <div class="speed">
+              <button data-rate="1">1×</button><button data-rate="1.5">1.5×</button><button data-rate="2">2×</button
+              ><button data-rate="3">3×</button>
             </div>
             <div id="facts" class="facts"></div>
-            <div id="tags" class="tags"></div>
-            <label>Your tags <span class="hint">(comma separated)</span></label>
-            <input id="userTags" placeholder="e.g. mulligan, misplay, tournament" />
-            <label>Notes</label>
+          </div>
+          <div class="card">
+            <div class="cardHead">
+              <span>Tags</span>
+              <button id="star" class="starBtn" title="Star this game">☆</button>
+            </div>
+            <div id="tags" class="chips"></div>
+            <div id="userTagBox" class="tagInput">
+              <input id="userTagInput" list="tagSuggest" placeholder="Add a tag and press Enter…" />
+              <datalist id="tagSuggest"></datalist>
+            </div>
+            <div class="cardHead"><span>Notes</span></div>
             <textarea id="notes" rows="4" placeholder="What happened in this game?"></textarea>
             <div class="actions">
-              <button id="reveal" class="ghost">Show in folder</button>
+              <button id="reveal">Show in folder</button>
               <button id="del" class="danger">Delete recording</button>
             </div>
           </div>
         </div>
       </section>
     </main>
+
+    <div id="picker" class="modal" hidden>
+      <div class="sheet">
+        <div class="sheetHead">
+          <h2 id="pickerTitle">Filter by leader</h2>
+          <button id="pickerClose" class="icon">✕</button>
+        </div>
+        <div class="pickerTools">
+          <input id="pickerSearch" type="search" placeholder="Search 0 leaders…" />
+          <div id="colorFilter" class="colors"></div>
+          <label class="toggle small"><input type="checkbox" id="pickerPlayed" /><span></span> Only in my library</label>
+        </div>
+        <div id="pickerGrid" class="grid"></div>
+        <div class="sheetFoot">
+          <span id="pickerSel" class="hint"></span>
+          <button id="pickerClear">Clear</button>
+          <button id="pickerDone" class="primary">Done</button>
+        </div>
+      </div>
+    </div>
+    <div id="onboard" class="modal" hidden>
+      <div class="sheet narrow">
+        <div class="obIcon">📁</div>
+        <h2>Where is OPTCG Sim installed?</h2>
+        <p class="hint">
+          The recorder watches the sim's combat logs to know when a game starts and ends, and uses its card art for the
+          leader pictures. Pick the folder you unzipped the sim into (like <code>1.31a_Windows</code>).
+        </p>
+        <div class="pathBox">
+          <span class="pathLabel" id="obLabel">Found automatically</span>
+          <code id="obDetected"></code>
+        </div>
+        <div id="obError" class="obError" hidden></div>
+        <div class="row end">
+          <button id="obChoose">Choose another folder…</button>
+          <button id="obUse" class="primary">Use this folder</button>
+        </div>
+      </div>
+    </div>
     <script type="module" src="app.js"></script>
   </body>
 </html>
