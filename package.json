@@ -8,9 +8,50 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test test/",
-    "ingest-leaders": "node scripts/ingest-leaders.mjs"
+    "ingest-leaders": "node scripts/ingest-leaders.mjs",
+    "dist": "electron-builder --win --publish never",
+    "icon": "node scripts/make-icon.mjs"
   },
   "devDependencies": {
-    "electron": "^33.2.1"
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "author": "Khoi Le",
+  "build": {
+    "appId": "io.github.optcgrecorder",
+    "productName": "OPTCG Recorder",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "OPTCG-Recorder-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "OPTCG-Recorder-${version}-portable.${ext}"
+    }
   }
 }

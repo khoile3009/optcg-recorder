@@ -1,0 +1,31 @@
+# Push a tag like v0.1.0 and this builds the Windows installer + portable exe
+# and attaches them to a GitHub Release for that tag.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npx electron-builder --win --publish never
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          generate_release_notes: true
+          files: |
+            dist/OPTCG-Recorder-Setup-*.exe
+            dist/OPTCG-Recorder-*-portable.exe
