@@ -6,7 +6,9 @@ filter and rewatch them.
 
 ## Download
 
-Grab the latest build from the **Releases** page:
+**[⬇ Download the latest release](https://github.com/khoile3009/optcg-recorder/releases/latest)** (Windows)
+
+The release page has two files; either works:
 
 - **`OPTCG-Recorder-Setup-<version>.exe`**: installer, adds a Start menu shortcut.
 - **`OPTCG-Recorder-<version>-portable.exe`**: single exe, no install, just run it.
