@@ -19,6 +19,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseLog, parseLogFileName, tagsFor, titleFor } from './logtags.mjs'
+import { ASSETS, mergeLeaders, parseLeaders } from './leaderdb.mjs'
+import { LEADERS as BUNDLED_LEADERS } from './data/leaders.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const POLL_MS = 2000
@@ -131,7 +133,52 @@ async function setSourceDir(picked) {
   settings.sourceDir = dir
   await saveSettings()
   ensureWatching()
+  void refreshLeaders()
   return status()
+}
+
+// ─── Leader list ──────────────────────────────────────────────────────────
+// The sim updates itself with new sets, so the leader list is re-read from its
+// card database on launch and whenever the sim folder changes. The last good
+// read is cached (keyed on the file's size + mtime) so an unchanged sim isn't
+// re-parsed and the list survives the folder going missing.
+
+const leadersCachePath = path.join(userData, 'leaders.json')
+let leaders = BUNDLED_LEADERS
+try {
+  const cached = JSON.parse(fs.readFileSync(leadersCachePath, 'utf8'))
+  if (Array.isArray(cached.leaders) && cached.leaders.length) leaders = mergeLeaders(cached.leaders, BUNDLED_LEADERS)
+} catch {
+  // no cache yet
+}
+
+let leadersBusy = false
+async function refreshLeaders() {
+  const root = simRoot()
+  if (!root || leadersBusy) return
+  leadersBusy = true
+  try {
+    const file = path.join(root, ASSETS)
+    const st = await fsp.stat(file)
+    let cached = null
+    try {
+      cached = JSON.parse(await fsp.readFile(leadersCachePath, 'utf8'))
+    } catch {
+      // first read
+    }
+    if (cached?.file === file && cached.size === st.size && cached.mtimeMs === st.mtimeMs) return
+    const fromSim = parseLeaders(await fsp.readFile(file))
+    if (fromSim.length < 20) return // layout changed or a partial file: keep what we have
+    await fsp.writeFile(leadersCachePath, JSON.stringify({ file, size: st.size, mtimeMs: st.mtimeMs, leaders: fromSim }))
+    const next = mergeLeaders(fromSim, BUNDLED_LEADERS)
+    const changed = next.length !== leaders.length || next.some((l, i) => l.id !== leaders[i].id || l.name !== leaders[i].name)
+    leaders = next
+    if (changed) libraryWin?.webContents.send('app:event', { type: 'leaders' })
+  } catch (e) {
+    console.warn('leader refresh failed:', e.message)
+  } finally {
+    leadersBusy = false
+  }
 }
 
 // ─── Library ──────────────────────────────────────────────────────────────
@@ -487,6 +534,7 @@ function sendStatus() {
 }
 
 ipcMain.handle('app:status', () => status())
+ipcMain.handle('app:leaders', () => leaders)
 ipcMain.handle('lib:list', () => listRecordings())
 ipcMain.handle('lib:update', (_e, id, patch) =>
   updateMeta(id, {
@@ -620,6 +668,7 @@ else {
     })
 
     ensureWatching()
+    void refreshLeaders()
     setInterval(() => {
       ensureWatching()
       void safeTick()

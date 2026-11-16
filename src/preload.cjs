@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('recorder', {
   status: () => ipcRenderer.invoke('app:status'),
+  leaders: () => ipcRenderer.invoke('app:leaders'),
   list: () => ipcRenderer.invoke('lib:list'),
   update: (id, patch) => ipcRenderer.invoke('lib:update', id, patch),
   remove: (id) => ipcRenderer.invoke('lib:delete', id),

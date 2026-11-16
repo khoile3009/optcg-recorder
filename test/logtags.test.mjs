@@ -123,7 +123,7 @@ test('leader list: unique ids, readable names, known colors', () => {
 })
 
 test('parseLeaders reads Leader records from Unity-serialized card data', async () => {
-  const { parseLeaders } = await import('../scripts/ingest-leaders.mjs')
+  const { parseLeaders } = await import('../src/leaderdb.mjs')
   const str = (s) => {
     const b = Buffer.from(s, 'utf8')
     const pad = Buffer.alloc((4 - (b.length % 4)) % 4)

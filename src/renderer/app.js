@@ -1,5 +1,5 @@
 import { matchesFilters, recordStats, shortName } from '../logtags.mjs'
-import { LEADERS } from '../data/leaders.mjs'
+import { LEADERS as BUNDLED_LEADERS } from '../data/leaders.mjs'
 
 const api = window.recorder
 const $ = (id) => document.getElementById(id)
@@ -10,7 +10,19 @@ const el = (tag, cls, text) => {
   return e
 }
 
-const LEADER = new Map(LEADERS.map((l) => [l.id, l]))
+// Bundled list until main hands over the one read from the installed sim (it
+// refreshes on launch and whenever the sim folder changes).
+let LEADERS = BUNDLED_LEADERS
+let LEADER = new Map(LEADERS.map((l) => [l.id, l]))
+async function loadLeaders() {
+  try {
+    const list = await api.leaders()
+    if (Array.isArray(list) && list.length) LEADERS = list
+  } catch {
+    /* keep the bundled list */
+  }
+  LEADER = new Map(LEADERS.map((l) => [l.id, l]))
+}
 const COLOR_HEX = { Red: '#e5484d', Green: '#30a46c', Blue: '#3e8ed0', Purple: '#8e4ec6', Black: '#8b8d98', Yellow: '#f5c518' }
 
 let recs = []
@@ -563,8 +575,15 @@ api.onEvent((ev) => {
     status = ev.status
     renderStatus()
   } else if (ev.type === 'library') void refresh()
+  else if (ev.type === 'leaders') {
+    void loadLeaders().then(() => {
+      void refresh()
+      if (!$('picker').hidden) renderPicker()
+    })
+  }
 })
 status = await api.status()
 renderStatus()
+await loadLeaders()
 await loadSources()
 await refresh()

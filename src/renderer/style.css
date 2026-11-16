@@ -240,6 +240,8 @@ select option {
   border: 1px solid var(--line2);
   border-radius: var(--radius);
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
 }
 .popover h3 {
   font-size: 11px;
@@ -848,7 +850,8 @@ main {
 }
 .sheet {
   width: min(1100px, 100%);
-  max-height: 100%;
+  max-height: calc(100vh - 48px);
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -1039,4 +1042,10 @@ main {
 }
 .hint code {
   color: var(--text2);
+}
+
+/* Sidebar sections keep their natural height so the sidebar itself scrolls
+   instead of squeezing the strips and list to nothing. */
+#side > * {
+  flex-shrink: 0;
 }
