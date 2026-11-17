@@ -67,7 +67,17 @@ export const QUALITY = {
 }
 const quality = () => QUALITY[settings.quality] ?? QUALITY.balanced
 
-let settings = { sourceDir: null, capture: 'auto', autoRecord: true, quality: 'balanced', ...readJson(settingsPath, {}) }
+let settings = {
+  sourceDir: null,
+  capture: 'auto',
+  autoRecord: true,
+  quality: 'balanced',
+  systemAudio: false,
+  mic: false,
+  micDevice: 'default',
+  micGain: 1,
+  ...readJson(settingsPath, {}),
+}
 const saveSettings = () => writeJson(settingsPath, settings)
 
 // ─── Sim folder ───────────────────────────────────────────────────────────
@@ -268,7 +278,14 @@ async function startRecording({ partial = null, manual = false } = {}) {
   })
   await ensureRecorderWindow()
   const q = quality()
-  recorderWin.webContents.send('rec:start', { id, fps: q.fps, height: q.height, bitrate: q.mbps * 1_000_000 })
+  recorderWin.webContents.send('rec:start', {
+    id,
+    fps: q.fps,
+    height: q.height,
+    bitrate: q.mbps * 1_000_000,
+    systemAudio: !!settings.systemAudio,
+    mic: settings.mic ? { deviceId: settings.micDevice || 'default', gain: settings.micGain ?? 1 } : null,
+  })
   sendStatus()
   sendLibrary()
 }
@@ -292,6 +309,11 @@ ipcMain.on('rec:chunk', (_e, id, data) => {
 })
 ipcMain.on('rec:stopped', (_e, id) => {
   if (rec?.id === id) void finalize(rec)
+})
+// Non-fatal (e.g. the mic could not be opened): keep recording, surface the message.
+ipcMain.on('rec:warn', (_e, _id, message) => {
+  lastError = String(message)
+  sendStatus()
 })
 ipcMain.on('rec:error', (_e, id, message) => {
   lastError = message
@@ -523,6 +545,10 @@ function status() {
     autoRecord: settings.autoRecord,
     capture: settings.capture,
     quality: settings.quality,
+    systemAudio: !!settings.systemAudio,
+    mic: !!settings.mic,
+    micDevice: settings.micDevice || 'default',
+    micGain: settings.micGain ?? 1,
     qualities: Object.entries(QUALITY).map(([key, q]) => ({ key, label: q.label, mbPerMin: Math.round((q.mbps * 60) / 8) })),
     recording: rec && { id: rec.id, startMs: rec.startMs, bytes: rec.bytes, manual: rec.manual, stopping: rec.stopping },
     lastError,
@@ -562,6 +588,10 @@ ipcMain.handle('app:setSettings', async (_e, patch) => {
   if (patch.capture != null) settings.capture = String(patch.capture)
   if (patch.autoRecord != null) settings.autoRecord = !!patch.autoRecord
   if (patch.quality != null && QUALITY[patch.quality]) settings.quality = patch.quality
+  if (patch.systemAudio != null) settings.systemAudio = !!patch.systemAudio
+  if (patch.mic != null) settings.mic = !!patch.mic
+  if (patch.micDevice != null) settings.micDevice = String(patch.micDevice)
+  if (patch.micGain != null && Number.isFinite(+patch.micGain)) settings.micGain = Math.min(3, Math.max(0, +patch.micGain))
   await saveSettings()
   sendStatus()
   return status()
@@ -659,9 +689,11 @@ else {
     for (const m of listRecordings()) if (m.status === 'recording') await updateMeta(m.id, { status: 'done', tags: [...(m.tags ?? []), 'interrupted'] })
 
     // getDisplayMedia in the recorder window gets the source we pick here; no picker UI.
-    session.defaultSession.setDisplayMediaRequestHandler(async (_req, callback) => {
+    // 'loopback' is the whole system mix (Windows can't capture one window's audio).
+    session.defaultSession.setDisplayMediaRequestHandler(async (req, callback) => {
       try {
-        callback({ video: await pickSource() })
+        const video = await pickSource()
+        callback(req.audioRequested && settings.systemAudio ? { video, audio: 'loopback' } : { video })
       } catch {
         callback({})
       }

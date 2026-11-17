@@ -28,4 +28,5 @@ contextBridge.exposeInMainWorld('capture', {
   chunk: (id, bytes) => ipcRenderer.send('rec:chunk', id, bytes),
   stopped: (id) => ipcRenderer.send('rec:stopped', id),
   error: (id, message) => ipcRenderer.send('rec:error', id, message),
+  warn: (id, message) => ipcRenderer.send('rec:warn', id, message),
 })

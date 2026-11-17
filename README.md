@@ -32,6 +32,17 @@ sim and it records; finished games show up in the library.
 Recordings live in `%APPDATA%\optcg-recorder\recordings` ("Open library folder" in
 settings). Lower the quality in settings if files are too big.
 
+### Sound and commentary
+
+Recordings are silent by default. Under **Settings → Audio** you can turn on:
+
+- **Record game sound**: captures your PC's audio output. Windows can't isolate a single
+  app, so anything else that plays (music, Discord) ends up in the video too.
+- **Record microphone**: pick the mic and set its volume, e.g. to commentate a game.
+
+Both get mixed into a single audio track. The `.webm` files (VP9 + Opus) upload to
+YouTube as they are.
+
 ## Develop
 
 ```bash

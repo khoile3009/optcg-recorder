@@ -91,6 +91,11 @@ function renderStatus() {
   $('recBtn').classList.toggle('stop', !!r)
   $('recBtn').disabled = !!r?.stopping
   $('autoRec').checked = status.autoRecord
+  $('sysAudio').checked = !!status.systemAudio
+  $('micOn').checked = !!status.mic
+  $('micOpts').hidden = !status.mic
+  if (document.activeElement !== $('micGain')) $('micGain').value = status.micGain ?? 1
+  $('micGainLabel').textContent = `${Math.round(($('micGain').value || 1) * 100)}%`
   $('folderHint').textContent = status.sourceDir ? `Watching ${status.sourceDir}` : 'No sim folder chosen yet.'
   $('error').hidden = !status.lastError
   $('error').textContent = status.lastError ?? ''
@@ -134,7 +139,37 @@ async function loadSources() {
   sel.value = status?.capture ?? 'auto'
 }
 
+async function loadMics() {
+  let mics = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput')
+  // Device labels stay blank until mic access has been granted once.
+  if (status?.mic && mics.length && !mics.some((d) => d.label)) {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true })
+      s.getTracks().forEach((t) => t.stop())
+      mics = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput')
+    } catch {}
+  }
+  const sel = $('micDevice')
+  sel.replaceChildren(new Option('System default', 'default'))
+  mics
+    .filter((d) => d.deviceId !== 'default' && d.deviceId !== 'communications')
+    .forEach((d, i) => sel.add(new Option(d.label || `Microphone ${i + 1}`, d.deviceId)))
+  const want = status?.micDevice ?? 'default'
+  if (![...sel.options].some((o) => o.value === want)) sel.add(new Option('(not connected) saved mic', want))
+  sel.value = want
+}
+
 $('recBtn').onclick = () => (status?.recording ? api.stop() : api.start())
+$('sysAudio').onchange = (e) => api.setSettings({ systemAudio: e.target.checked })
+$('micOn').onchange = async (e) => {
+  status = await api.setSettings({ mic: e.target.checked })
+  renderStatus()
+  if (e.target.checked) void loadMics()
+}
+$('micDevice').onfocus = loadMics
+$('micDevice').onchange = (e) => api.setSettings({ micDevice: e.target.value })
+$('micGain').oninput = (e) => ($('micGainLabel').textContent = `${Math.round(e.target.value * 100)}%`)
+$('micGain').onchange = (e) => api.setSettings({ micGain: Number(e.target.value) })
 $('autoRec').onchange = (e) => api.setSettings({ autoRecord: e.target.checked })
 $('quality').onchange = (e) => api.setSettings({ quality: e.target.value })
 $('capture').onfocus = loadSources
@@ -149,7 +184,10 @@ $('libBtn').onclick = () => api.reveal(null)
 $('settingsBtn').onclick = (e) => {
   e.stopPropagation()
   $('settings').hidden = !$('settings').hidden
-  if (!$('settings').hidden) void loadSources()
+  if (!$('settings').hidden) {
+    void loadSources()
+    void loadMics()
+  }
 }
 document.addEventListener('click', (e) => {
   if (!$('settings').hidden && !$('settings').contains(e.target)) $('settings').hidden = true

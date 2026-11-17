@@ -28,6 +28,20 @@
           <select id="capture"></select>
         </label>
         <label class="toggle"><input type="checkbox" id="autoRec" /><span></span> Auto-record when a game starts</label>
+        <h3>Audio</h3>
+        <label class="toggle"><input type="checkbox" id="sysAudio" /><span></span> Record game sound</label>
+        <span class="hint">Captures everything your PC plays (Windows can't isolate one app), so mute music or calls you don't want in the video.</span>
+        <label class="toggle"><input type="checkbox" id="micOn" /><span></span> Record microphone</label>
+        <div id="micOpts" hidden>
+          <label class="field"
+            >Microphone
+            <select id="micDevice"></select>
+          </label>
+          <label class="field"
+            >Mic volume <span id="micGainLabel" class="hint"></span>
+            <input type="range" id="micGain" min="0" max="3" step="0.1" />
+          </label>
+        </div>
         <h3>Folders</h3>
         <div class="row">
           <button id="folderBtn">OPTCG Sim folder…</button>
