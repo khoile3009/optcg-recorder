@@ -97,6 +97,8 @@ window.capture.onStart(async ({ id, fps, height, bitrate, systemAudio, mic }) =>
     }
     // If the captured window closes, end the recording.
     display.getVideoTracks()[0].onended = () => mr?.state === 'recording' && mr.stop()
+    // Main stamps turn changes relative to this, so turn jumps line up with the video.
+    mr.onstart = () => window.capture.started(id, Date.now())
     mr.start(1000)
   } catch (e) {
     cleanup()

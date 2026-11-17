@@ -772,6 +772,35 @@ main {
   color: var(--muted);
 }
 
+.turns {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.turnsLabel {
+  color: var(--text2);
+  font-size: 12px;
+  margin-right: 4px;
+}
+.turns button {
+  min-width: 30px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.turns button.me {
+  border-bottom: 2px solid var(--accent);
+}
+.turns button.opp {
+  border-bottom: 2px solid var(--muted);
+}
+.turns button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
 .card {
   padding: 16px;
   border-radius: var(--radius);

@@ -29,6 +29,9 @@ On first start the app asks where OPTCG Sim is installed (the folder you unzippe
 like `1.31a_Windows`). It usually finds it on its own. After that, start a game in the
 sim and it records; finished games show up in the library.
 
+The player has a row of turn buttons: click **3** to jump to the start of turn 3.
+Highlighted buttons are your turns; the current turn is filled in as you watch.
+
 Recordings live in `%APPDATA%\optcg-recorder\recordings` ("Open library folder" in
 settings). Lower the quality in settings if files are too big.
 

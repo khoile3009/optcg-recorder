@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { countEndTurns, matchesQuery, parseLog, parseLogFileName, tagsFor, titleFor } from '../src/logtags.mjs'
+import { countEndTurns, matchesQuery, parseLog, parseLogFileName, tagsFor, titleFor, turnsStarted } from '../src/logtags.mjs'
 
 const b64 = (s) => Buffer.from(s).toString('base64')
 const ZW = '​'
@@ -137,4 +137,12 @@ test('parseLeaders reads Leader records from Unity-serialized card data', async 
     { id: 'EB05-010', name: 'Nico Robin', colors: ['Green', 'Yellow'], set: 'EB05' },
     { id: 'OP18-022', name: 'Monkey D. Luffy', colors: ['Green'], set: 'OP18' },
   ])
+})
+
+test('turns started: none before the first DON!! draw, then one per end-of-turn', () => {
+  const don = `RZ1|SEM|5|1|${b64('Log.DrawDon')}|x`
+  const end = (seq) => `RZ1|SEM|${seq}|1|${b64('Log.EndTurn')}|x`
+  assert.equal(turnsStarted(['RZ1|META|x|0', 'mulligan...'].join('\n')), 0)
+  assert.equal(turnsStarted([don].join('\n')), 1)
+  assert.equal(turnsStarted([don, end(6), don, end(7)].join('\n')), 3)
 })

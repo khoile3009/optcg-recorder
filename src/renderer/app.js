@@ -534,6 +534,7 @@ function renderDetail(r, fresh) {
   const live = r.status === 'recording' || !r.videoUrl
   $('live').hidden = !live
   video.hidden = live
+  renderTurns(r, live)
   if (fresh) {
     if (live) video.removeAttribute('src')
     else video.src = r.videoUrl
@@ -556,6 +557,48 @@ video.addEventListener('loadedmetadata', () => {
   video.addEventListener('durationchange', back)
   video.currentTime = 1e101
 })
+
+// Turn jumps. Stamps come from a 2s log poll, so seek a little early to land
+// before the turn starts rather than just after.
+const TURN_LEAD_S = 2
+let turnTimes = []
+
+function renderTurns(r, live) {
+  turnTimes = live ? [] : (r.turnTimes ?? [])
+  const box = $('turns')
+  box.hidden = !turnTimes.length
+  if (!turnTimes.length) return box.replaceChildren()
+  const mine = (n) => (r.firstSeat ? (n % 2 === 1) === (r.firstSeat === 1) : null)
+  box.replaceChildren(
+    el('span', 'turnsLabel', 'Turn'),
+    ...turnTimes.map((t, i) => {
+      const n = i + 1
+      const who = mine(n)
+      const b = el('button', who === null ? '' : who ? 'me' : 'opp', String(n))
+      b.title = `Turn ${n}${who === null ? '' : who ? ' (you)' : ' (opponent)'} at ${fmtClock(t)}`
+      b.onclick = () => {
+        video.currentTime = Math.max(0, t - TURN_LEAD_S)
+        void video.play()
+      }
+      return b
+    }),
+  )
+  markTurn()
+}
+
+function fmtClock(s) {
+  const m = Math.floor(s / 60)
+  return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`
+}
+
+/** Highlight the turn being watched. */
+function markTurn() {
+  const t = video.currentTime + TURN_LEAD_S
+  let cur = -1
+  turnTimes.forEach((x, i) => x <= t && (cur = i))
+  $('turns').querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', i === cur))
+}
+video.addEventListener('timeupdate', markTurn)
 
 function markRate(rate) {
   for (const b of document.querySelectorAll('.speed button')) b.classList.toggle('on', Number(b.dataset.rate) === rate)

@@ -39,6 +39,17 @@ export function countEndTurns(text) {
   return n
 }
 
+const FIRST_DON_B64 = btoa('Log.DrawDon')
+
+/**
+ * Turns begun so far: turn 1 starts with the first DON!! draw (after mulligans),
+ * and every end-of-turn starts the next one. Works on partial logs.
+ */
+export function turnsStarted(text) {
+  if (!text.includes(`|${FIRST_DON_B64}|`)) return 0
+  return 1 + countEndTurns(text)
+}
+
 export function parseLog(text) {
   const seats = { 1: { name: '', leaderId: '', leaderName: '' }, 2: { name: '', leaderId: '', leaderName: '' } }
   const leaderNameByPlayer = new Map()

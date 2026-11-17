@@ -18,7 +18,7 @@ import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { parseLog, parseLogFileName, tagsFor, titleFor } from './logtags.mjs'
+import { parseLog, parseLogFileName, tagsFor, titleFor, turnsStarted } from './logtags.mjs'
 import { ASSETS, mergeLeaders, parseLeaders } from './leaderdb.mjs'
 import { LEADERS as BUNDLED_LEADERS } from './data/leaders.mjs'
 
@@ -264,7 +264,7 @@ async function startRecording({ partial = null, manual = false } = {}) {
   let id = localStamp()
   while (fs.existsSync(metaPath(id))) id += '-b'
   const startMs = Date.now()
-  rec = { id, startMs, partial, manual, bytes: 0, stopping: false, endSeenAt: null, lastText: '' }
+  rec = { id, startMs, videoStartMs: null, turnAt: [], partial, manual, bytes: 0, stopping: false, endSeenAt: null, lastText: '' }
   rec.stream = fs.createWriteStream(path.join(libDir, `${id}.webm`))
   await writeJson(metaPath(id), {
     id,
@@ -306,6 +306,10 @@ ipcMain.on('rec:chunk', (_e, id, data) => {
   const buf = Buffer.from(data)
   rec.bytes += buf.length
   rec.stream.write(buf)
+})
+// The video's t=0 (MediaRecorder start), so turn stamps line up with playback.
+ipcMain.on('rec:started', (_e, id, atMs) => {
+  if (rec?.id === id) rec.videoStartMs = Number(atMs) || Date.now()
 })
 ipcMain.on('rec:stopped', (_e, id) => {
   if (rec?.id === id) void finalize(rec)
@@ -374,6 +378,7 @@ async function finalize(cur) {
           winnerSeat: game.winnerSeat,
           endReason: game.endReason,
           turns: game.turns,
+          turnTimes: turnTimesFor(cur),
           tags: tagsFor(game, { finished }),
           title: titleFor(game),
         }
@@ -384,6 +389,12 @@ async function finalize(cur) {
   sendLibrary()
   if (Notification.isSupported())
     new Notification({ title: 'Game saved', body: `${meta.title}  (${Math.round(durationMs / 60000)} min)` }).show()
+}
+
+/** Seconds into the video at which each turn began (as far as the watcher saw). */
+function turnTimesFor(cur) {
+  const t0 = cur.videoStartMs ?? cur.startMs
+  return cur.turnAt.map((ms) => Math.max(0, Math.round((ms - t0) / 100) / 10))
 }
 
 /** The finished log for this recording: same game id, else the newest one written since it began. */
@@ -452,6 +463,8 @@ async function tick() {
       } catch {
         /* keep last */
       }
+      // No timestamps in the log: stamp each new turn when we first see it.
+      for (let n = turnsStarted(rec.lastText); rec.turnAt.length < n; ) rec.turnAt.push(now)
       if (rec.lastText.includes('\nRZ1|END|')) {
         rec.endSeenAt ??= now
         if (now - rec.endSeenAt >= TAIL_MS) stopRecording('game over')

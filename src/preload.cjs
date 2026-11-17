@@ -29,4 +29,5 @@ contextBridge.exposeInMainWorld('capture', {
   stopped: (id) => ipcRenderer.send('rec:stopped', id),
   error: (id, message) => ipcRenderer.send('rec:error', id, message),
   warn: (id, message) => ipcRenderer.send('rec:warn', id, message),
+  started: (id, atMs) => ipcRenderer.send('rec:started', id, atMs),
 })
