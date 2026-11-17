@@ -1,4 +1,4 @@
-import { matchesFilters, recordStats, shortName } from '../logtags.mjs'
+import { matchesFilters, matchupStats, recordStats, shortName } from '../logtags.mjs'
 import { LEADERS as BUNDLED_LEADERS } from '../data/leaders.mjs'
 
 const api = window.recorder
@@ -76,6 +76,13 @@ const colorDots = (id) => {
 
 // ─── Status, settings, onboarding ─────────────────────────────────────────
 
+$('updateBtn').onclick = async () => {
+  if (!status?.update) return
+  if (!status.update.ready) return void api.openUpdatePage()
+  const res = await api.installUpdate()
+  if (!res?.ok && res?.error) alert(res.error)
+}
+
 function renderStatus() {
   if (!status) return
   const r = status.recording
@@ -99,6 +106,16 @@ function renderStatus() {
   $('folderHint').textContent = status.sourceDir ? `Watching ${status.sourceDir}` : 'No sim folder chosen yet.'
   $('error').hidden = !status.lastError
   $('error').textContent = status.lastError ?? ''
+  const u = status.update
+  $('updateBar').hidden = !u
+  if (u) {
+    $('updateText').textContent = u.ready
+      ? `Version ${u.version} is ready to install.`
+      : `Version ${u.version} is available.`
+    $('updateBtn').textContent = u.ready ? 'Restart to update' : 'Download'
+    $('updateBtn').disabled = u.ready && !!r
+    $('updateBtn').title = u.ready && r ? 'Available once the recording is saved' : ''
+  }
 
   const q = $('quality')
   if (q.options.length !== status.qualities.length)
@@ -404,6 +421,44 @@ function renderStats(shown) {
     stat('Going 1st', pct(s.first.wins, s.first.losses), `${s.first.wins}–${s.first.losses}`),
     stat('Going 2nd', pct(s.second.wins, s.second.losses), `${s.second.wins}–${s.second.losses}`),
   )
+  renderMatchups(shown)
+}
+
+// Win rate per opposing leader, split by turn order. Clicking a row filters to it.
+function renderMatchups(shown) {
+  const rows = matchupStats(shown)
+  const box = $('matchups')
+  box.hidden = rows.length < 1
+  $('matchupCount').textContent = rows.length ? `${rows.length} leader${rows.length === 1 ? '' : 's'}` : ''
+  const rate = (w, l) => {
+    const span = el('span')
+    if (!(w + l)) return span.append(el('span', 'na', '–')), span
+    const p = Math.round((100 * w) / (w + l))
+    span.append(el('span', p >= 55 ? 'good' : p <= 45 ? 'bad' : '', `${p}%`), el('small', null, `${w}–${l}`))
+    return span
+  }
+  $('matchupRows').replaceChildren(
+    ...rows.map((m) => {
+      const b = el('button', 'mRow' + (filters.opp.length === 1 && filters.opp[0] === m.leaderId ? ' on' : ''))
+      const name = el('span', 'mName')
+      name.append(avatar(m.leaderId, 'xs'), el('b', null, LEADER.get(m.leaderId)?.name ?? m.leaderId))
+      b.append(name, el('span', null, String(m.games)), rate(m.wins, m.losses), rate(m.first.wins, m.first.losses), rate(m.second.wins, m.second.losses))
+      b.title = 'Show only games against this leader'
+      b.onclick = () => {
+        filters.opp = filters.opp.length === 1 && filters.opp[0] === m.leaderId ? [] : [m.leaderId]
+        renderAll()
+      }
+      return b
+    }),
+  )
+}
+try {
+  $('matchups').open = localStorage.getItem('matchupsOpen') === '1'
+} catch {}
+$('matchups').ontoggle = () => {
+  try {
+    localStorage.setItem('matchupsOpen', $('matchups').open ? '1' : '0')
+  } catch {}
 }
 
 function renderList() {
@@ -632,7 +687,27 @@ $('del').onclick = async () => {
   await api.remove(r.id)
 }
 
-// Keyboard: space play/pause, ←/→ seek 5 s (when not typing); Esc closes overlays.
+// Keyboard (when not typing): space play/pause, ←/→ seek 5 s, [ / ] previous/next turn,
+// , / . slower/faster. Esc closes overlays.
+const RATES = [1, 1.5, 2, 3]
+function stepTurn(dir) {
+  if (!turnTimes.length) return
+  const t = video.currentTime + TURN_LEAD_S
+  let cur = -1
+  turnTimes.forEach((x, i) => x <= t + 0.25 && (cur = i))
+  // "[" inside a turn goes back to its start first, like a music player's previous button.
+  let next = cur + dir
+  if (dir < 0 && cur >= 0 && video.currentTime - Math.max(0, turnTimes[cur] - TURN_LEAD_S) > 3) next = cur
+  if (next < 0) return void (video.currentTime = 0)
+  if (next >= turnTimes.length) return
+  video.currentTime = Math.max(0, turnTimes[next] - TURN_LEAD_S)
+}
+function stepRate(dir) {
+  const i = RATES.findIndex((r) => r >= video.playbackRate - 1e-6)
+  const at = i < 0 ? RATES.length - 1 : i
+  video.playbackRate = RATES[Math.min(RATES.length - 1, Math.max(0, at + dir))]
+  markRate(video.playbackRate)
+}
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     $('picker').hidden = true
@@ -647,6 +722,12 @@ document.addEventListener('keydown', (e) => {
     else video.pause()
   } else if (e.key === 'ArrowRight') video.currentTime += 5
   else if (e.key === 'ArrowLeft') video.currentTime = Math.max(0, video.currentTime - 5)
+  else if (e.key === ']') stepTurn(1)
+  else if (e.key === '[') stepTurn(-1)
+  else if (e.key === '.' || e.key === '>') stepRate(1)
+  else if (e.key === ',' || e.key === '<') stepRate(-1)
+  else return
+  e.preventDefault()
 })
 
 // ─── Boot ─────────────────────────────────────────────────────────────────

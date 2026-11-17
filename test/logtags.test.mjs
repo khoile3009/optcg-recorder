@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { countEndTurns, matchesQuery, parseLog, parseLogFileName, tagsFor, titleFor, turnsStarted } from '../src/logtags.mjs'
+import { countEndTurns, matchesQuery, matchupStats, parseLog, parseLogFileName, tagsFor, titleFor, turnsStarted } from '../src/logtags.mjs'
 
 const b64 = (s) => Buffer.from(s).toString('base64')
 const ZW = '​'
@@ -108,6 +108,20 @@ test('recordStats splits wins by turn order and skips unfinished games', () => {
     { winnerSeat: null, firstSeat: 2 },
   ])
   assert.deepEqual(s, { games: 4, wins: 2, losses: 1, first: { wins: 1, losses: 1 }, second: { wins: 1, losses: 0 } })
+})
+
+test('matchupStats groups by opposing leader, most-played first', () => {
+  const g = (opp, winnerSeat, firstSeat) => ({ opp: { leaderId: opp }, winnerSeat, firstSeat })
+  const m = matchupStats([g('OP01-001', 1, 1), g('OP02-001', 2, 2), g('OP02-001', 1, 1), g('OP02-001', null, 2), { opp: {} }])
+  assert.deepEqual(
+    m.map((x) => [x.leaderId, x.games, x.wins, x.losses]),
+    [
+      ['OP02-001', 3, 1, 1],
+      ['OP01-001', 1, 1, 0],
+    ],
+  )
+  assert.deepEqual(m[0].first, { wins: 1, losses: 0 })
+  assert.deepEqual(m[0].second, { wins: 0, losses: 1 })
 })
 
 test('leader list: unique ids, readable names, known colors', () => {

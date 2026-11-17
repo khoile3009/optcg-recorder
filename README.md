@@ -32,6 +32,27 @@ sim and it records; finished games show up in the library.
 The player has a row of turn buttons: click **3** to jump to the start of turn 3.
 Highlighted buttons are your turns; the current turn is filled in as you watch.
 
+Keyboard shortcuts in the player:
+
+| Key | Action |
+| --- | --- |
+| `Space` | play / pause |
+| `←` / `→` | back / forward 5 seconds |
+| `[` / `]` | previous / next turn |
+| `,` / `.` | slower / faster (1×, 1.5×, 2×, 3×) |
+
+Above the filters, **Matchups** shows your win rate against each opposing leader,
+overall and split by going 1st and 2nd. It follows the current filters, so pick your
+leader first to see that deck's matchups. Click a row to show only those games.
+
+### Updates
+
+The installed version checks GitHub for new releases, downloads them in the background,
+and offers **Restart to update** (otherwise the update installs the next time you quit).
+The portable exe can't update itself, so it shows a **Download** link instead.
+Auto-update starts with v0.4.0: if you're on v0.3.0 or older, download the new installer
+once by hand.
+
 Recordings live in `%APPDATA%\optcg-recorder\recordings` ("Open library folder" in
 settings). Lower the quality in settings if files are too big.
 

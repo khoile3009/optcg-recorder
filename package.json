@@ -52,6 +52,14 @@
     },
     "portable": {
       "artifactName": "OPTCG-Recorder-${version}-portable.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "khoile3009",
+      "repo": "optcg-recorder"
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   }
 }

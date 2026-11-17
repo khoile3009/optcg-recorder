@@ -51,11 +51,20 @@
       </div>
     </header>
     <div id="error" hidden></div>
+    <div id="updateBar" hidden>
+      <span id="updateText"></span>
+      <button id="updateBtn" class="primary"></button>
+    </div>
 
     <main>
       <aside id="side">
         <div class="searchWrap"><input id="search" type="search" placeholder="Search leaders, players, notes…" /></div>
         <div id="stats" class="stats"></div>
+        <details id="matchups" class="matchups" hidden>
+          <summary><span>Matchups</span><span id="matchupCount" class="hint"></span></summary>
+          <div class="mHead"><span>Opponent</span><span>Games</span><span>Win</span><span>1st</span><span>2nd</span></div>
+          <div id="matchupRows"></div>
+        </details>
 
         <div class="filters">
           <div class="seg" data-key="result">
@@ -108,6 +117,14 @@
               ><button data-rate="3">3×</button>
             </div>
             <div id="facts" class="facts"></div>
+            <span
+              class="keys"
+              title="Space: play/pause
+← / →: back / forward 5 s
+[ / ]: previous / next turn
+, / .: slower / faster"
+              >⌨ Shortcuts</span
+            >
           </div>
           <div id="turns" class="turns" hidden></div>
           <div class="card">

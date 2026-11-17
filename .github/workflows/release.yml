@@ -1,5 +1,6 @@
 # Push a tag like v0.1.0 and this builds the Windows installer + portable exe
-# and attaches them to a GitHub Release for that tag.
+# and attaches them to a GitHub Release for that tag. latest.yml + the blockmap are
+# what installed copies read to auto-update.
 name: Release
 
 on:
@@ -29,3 +30,5 @@ jobs:
           files: |
             dist/OPTCG-Recorder-Setup-*.exe
             dist/OPTCG-Recorder-*-portable.exe
+            dist/OPTCG-Recorder-Setup-*.exe.blockmap
+            dist/latest.yml

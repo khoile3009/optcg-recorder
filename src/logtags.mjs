@@ -168,3 +168,17 @@ export function recordStats(recs) {
   }
   return s
 }
+
+/** recordStats per opposing leader, most-played first. Games without a known opponent leader are skipped. */
+export function matchupStats(recs) {
+  const by = new Map()
+  for (const r of recs) {
+    const id = r.opp?.leaderId
+    if (!id) continue
+    if (!by.has(id)) by.set(id, [])
+    by.get(id).push(r)
+  }
+  return [...by]
+    .map(([leaderId, games]) => ({ leaderId, ...recordStats(games) }))
+    .sort((a, b) => b.games - a.games || b.wins + b.losses - (a.wins + a.losses) || a.leaderId.localeCompare(b.leaderId))
+}

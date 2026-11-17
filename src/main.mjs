@@ -21,6 +21,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseLog, parseLogFileName, tagsFor, titleFor, turnsStarted } from './logtags.mjs'
 import { ASSETS, mergeLeaders, parseLeaders } from './leaderdb.mjs'
 import { LEADERS as BUNDLED_LEADERS } from './data/leaders.mjs'
+import { installUpdate, startUpdateChecks } from './updater.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const POLL_MS = 2000
@@ -565,14 +566,27 @@ function status() {
     qualities: Object.entries(QUALITY).map(([key, q]) => ({ key, label: q.label, mbPerMin: Math.round((q.mbps * 60) / 8) })),
     recording: rec && { id: rec.id, startMs: rec.startMs, bytes: rec.bytes, manual: rec.manual, stopping: rec.stopping },
     lastError,
+    update,
   }
 }
+
+/** Newer release found: {version, ready} (installed build) or {version, url} (portable). */
+let update = null
 
 function sendStatus() {
   libraryWin?.webContents.send('app:event', { type: 'status', status: status() })
 }
 
 ipcMain.handle('app:status', () => status())
+ipcMain.handle('app:installUpdate', () => {
+  if (!update?.ready) return { ok: false, error: 'No update downloaded yet.' }
+  if (rec) return { ok: false, error: 'Finish the recording first.' }
+  installUpdate()
+  return { ok: true }
+})
+ipcMain.handle('app:openUpdatePage', () => {
+  if (update?.url?.startsWith('https://github.com/')) void shell.openExternal(update.url)
+})
 ipcMain.handle('app:leaders', () => leaders)
 ipcMain.handle('lib:list', () => listRecordings())
 ipcMain.handle('lib:update', (_e, id, patch) =>
@@ -721,6 +735,10 @@ else {
     await ensureRecorderWindow()
     await createLibraryWindow()
     void safeTick()
+    startUpdateChecks((u) => {
+      update = u
+      sendStatus()
+    })
   })
 
   // Closing the library window quits; stop and save any recording first.
