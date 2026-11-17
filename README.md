@@ -4,6 +4,15 @@ Records your OPTCG Sim games automatically, tags each one from the sim's combat 
 (your leader, the opponent's leader, going 1st/2nd, win/loss), and lets you search,
 filter and rewatch them.
 
+![Library and player](docs/screenshot.png)
+
+<details>
+<summary>Filter by leader</summary>
+
+![Leader picker](docs/leader-picker.png)
+
+</details>
+
 ## Download
 
 **[⬇ Download the latest release](https://github.com/khoile3009/optcg-recorder/releases/latest)** (Windows)
