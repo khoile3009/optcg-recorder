@@ -136,16 +136,17 @@
             </div>
             <button id="markMisplay" class="markBtn" title="Mark a misplay 3 s before now (M)">⚑ Mark misplay</button>
             <div id="facts" class="facts"></div>
-            <span
-              class="keys"
-              title="Space: play/pause
-← / →: back / forward 5 s
-[ / ]: previous / next turn
-N / P: next / previous event or misplay
-M: mark a misplay
-, / .: slower / faster"
-              >⌨ Shortcuts</span
-            >
+            <div class="keysWrap">
+              <button id="keysBtn" class="keys" aria-expanded="false" title="Keyboard shortcuts">⌨ Shortcuts</button>
+              <div id="keysPanel" class="keysPanel" hidden>
+                <div><kbd>Space</kbd><span>Play / pause</span></div>
+                <div><kbd>←</kbd> <kbd>→</kbd><span>Back / forward 5 s</span></div>
+                <div><kbd>[</kbd> <kbd>]</kbd><span>Previous / next turn</span></div>
+                <div><kbd>P</kbd> <kbd>N</kbd><span>Previous / next event or misplay</span></div>
+                <div><kbd>M</kbd><span>Mark a misplay</span></div>
+                <div><kbd>,</kbd> <kbd>.</kbd><span>Slower / faster</span></div>
+              </div>
+            </div>
           </div>
           <div id="turns" class="turns" hidden></div>
           <div class="card">

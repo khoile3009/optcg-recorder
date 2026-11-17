@@ -919,10 +919,22 @@ function stepRate(dir) {
   video.playbackRate = RATES[Math.min(RATES.length - 1, Math.max(0, at + dir))]
   markRate(video.playbackRate)
 }
+function toggleKeys(open = $('keysPanel').hidden) {
+  $('keysPanel').hidden = !open
+  $('keysBtn').setAttribute('aria-expanded', String(open))
+}
+$('keysBtn').onclick = (e) => {
+  e.stopPropagation()
+  toggleKeys()
+}
+document.addEventListener('click', (e) => {
+  if (!$('keysPanel').hidden && !e.target.closest('.keysWrap')) toggleKeys(false)
+})
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     $('picker').hidden = true
     $('settings').hidden = true
+    toggleKeys(false)
     return
   }
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) || $('detail').hidden || video.hidden)
