@@ -602,11 +602,18 @@ ipcMain.handle('app:openUpdatePage', () => {
 })
 ipcMain.handle('app:leaders', () => leaders)
 ipcMain.handle('lib:list', () => listRecordings())
+/** Misplay marks from the renderer: { t: seconds into the video, turn, note }, in time order. */
+const cleanMisplays = (list) =>
+  list
+    .filter((m) => Number.isFinite(m?.t) && m.t >= 0)
+    .map((m) => ({ t: m.t, turn: Number.isInteger(m.turn) && m.turn > 0 ? m.turn : null, note: String(m.note ?? '').slice(0, 500) }))
+    .sort((a, b) => a.t - b.t)
 ipcMain.handle('lib:update', (_e, id, patch) =>
   updateMeta(id, {
     ...(patch.userTags ? { userTags: patch.userTags.map(String).filter(Boolean) } : {}),
     ...(patch.notes != null ? { notes: String(patch.notes) } : {}),
     ...(patch.starred != null ? { starred: !!patch.starred } : {}),
+    ...(Array.isArray(patch.misplays) ? { misplays: cleanMisplays(patch.misplays) } : {}),
   }),
 )
 ipcMain.handle('lib:delete', async (_e, id) => {

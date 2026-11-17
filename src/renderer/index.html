@@ -74,6 +74,7 @@
             <button data-v="">Any</button><button data-v="1st">1st</button><button data-v="2nd">2nd</button>
           </div>
           <button id="starFilter" class="seg-single" title="Starred only">★</button>
+          <button id="misplayFilter" class="seg-single" title="Games with misplays">⚑</button>
         </div>
 
         <div class="section">
@@ -116,21 +117,32 @@
             <div class="eventLegend">
               <span><i class="lg hit me"></i>You lost a life</span><span><i class="lg hit opp"></i>Opponent lost a life</span
               ><span><i class="lg ko"></i>K.O.</span><span><i class="lg trigger"></i>Trigger</span
-              ><span class="muted">N / P: next / previous event</span>
+              ><span><i class="lg misplay"></i>Misplay</span><span class="muted">N / P: next / previous event</span>
             </div>
           </div>
+          <form id="misplayBox" class="misplayBox" hidden>
+            <div id="misplayLabel" class="misplayLabel"></div>
+            <div class="misplayRow">
+              <input id="misplayNote" placeholder="What went wrong? (optional)" maxlength="500" />
+              <button type="submit" class="primary">Save</button>
+              <button type="button" id="misplayCancel">Cancel</button>
+            </div>
+            <div class="hint">Enter to save · Esc to cancel</div>
+          </form>
           <div class="toolbar">
             <div class="speed">
               <button data-rate="1">1×</button><button data-rate="1.5">1.5×</button><button data-rate="2">2×</button
               ><button data-rate="3">3×</button>
             </div>
+            <button id="markMisplay" class="markBtn" title="Mark a misplay 3 s before now (M)">⚑ Mark misplay</button>
             <div id="facts" class="facts"></div>
             <span
               class="keys"
               title="Space: play/pause
 ← / →: back / forward 5 s
 [ / ]: previous / next turn
-N / P: next / previous event
+N / P: next / previous event or misplay
+M: mark a misplay
 , / .: slower / faster"
               >⌨ Shortcuts</span
             >
@@ -145,6 +157,10 @@ N / P: next / previous event
             <div id="userTagBox" class="tagInput">
               <input id="userTagInput" list="tagSuggest" placeholder="Add a tag and press Enter…" />
               <datalist id="tagSuggest"></datalist>
+            </div>
+            <div id="misplaySection" hidden>
+              <div class="cardHead"><span>Misplays</span><span id="misplayCount" class="hint"></span></div>
+              <div id="misplayList" class="misplayList"></div>
             </div>
             <div class="cardHead"><span>Notes</span></div>
             <textarea id="notes" rows="4" placeholder="What happened in this game?"></textarea>

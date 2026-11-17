@@ -13,6 +13,7 @@
   --win: #3dd68c;
   --loss: #ff6369;
   --rec: #ff4d4f;
+  --misplay: #ff8a3d;
   --radius: 12px;
   color-scheme: dark;
 }
@@ -848,6 +849,130 @@ main {
 .eventBar .tick.trigger .count {
   transform: rotate(-45deg);
 }
+/* Misplay flag: a pole through the bar with a pennant poking out above it. */
+.eventBar .flag {
+  position: absolute;
+  top: -8px;
+  bottom: 0;
+  z-index: 2;
+  width: 12px;
+  min-width: 0;
+  margin-left: -1px;
+  padding: 0;
+  border: 0;
+  border-left: 2px solid var(--misplay);
+  border-radius: 0;
+  background: none;
+  cursor: pointer;
+}
+.eventBar .flag::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-left: 9px solid var(--misplay);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+}
+.eventBar .flag:hover {
+  background: none;
+  filter: brightness(1.25);
+}
+.misplayBox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 138, 61, 0.45);
+  border-radius: 10px;
+  background: rgba(255, 138, 61, 0.06);
+}
+.misplayLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--misplay);
+}
+.misplayRow {
+  display: flex;
+  gap: 8px;
+}
+.misplayRow input {
+  flex: 1;
+  min-width: 0;
+}
+.markBtn {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--misplay);
+  border-color: rgba(255, 138, 61, 0.45);
+}
+.markBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.misplayList {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 4px;
+}
+.mpRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.mpRow:first-child {
+  border-top: 0;
+}
+.mpRow .seek {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: baseline;
+  gap: 10px;
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+.mpRow .seek:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.mpRow .time {
+  min-width: 38px;
+  color: var(--misplay);
+  font-variant-numeric: tabular-nums;
+}
+.mpRow .who {
+  min-width: 74px;
+  color: var(--text2);
+  font-size: 12px;
+}
+.mpRow .note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mpRow .note.empty {
+  color: var(--muted);
+}
+.mpRow .mini {
+  padding: 2px 7px;
+  font-size: 12px;
+  color: var(--muted);
+  border-color: transparent;
+  background: none;
+}
+.mpRow .mini:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+.res.mp {
+  background: rgba(255, 138, 61, 0.15);
+  color: var(--misplay);
+}
 .eventLegend {
   display: flex;
   flex-wrap: wrap;
@@ -885,6 +1010,12 @@ main {
   border-radius: 1px;
   transform: rotate(45deg);
   background: #b28cff;
+}
+.eventLegend .lg.misplay {
+  width: 2px;
+  border-radius: 0;
+  background: var(--misplay);
+  opacity: 1;
 }
 
 .turns {

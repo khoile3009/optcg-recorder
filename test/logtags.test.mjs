@@ -98,6 +98,10 @@ test('matchesFilters combines leader, order, result, star, user tags and text', 
   assert.ok(!matchesFilters(rec, { result: 'loss' }))
   assert.ok(!matchesFilters(rec, { userTags: ['misplay'] }))
   assert.ok(!matchesFilters({ ...rec, starred: false }, { starred: true }))
+  assert.ok(!matchesFilters(rec, { misplays: true }))
+  const marked = { ...rec, misplays: [{ t: 221, turn: 6, note: 'Attacked into 7k leader' }] }
+  assert.ok(matchesFilters(marked, { misplays: true, text: '7k' }))
+  assert.ok(!matchesFilters(marked, { text: 'counter' }))
 })
 
 test('recordStats splits wins by turn order and skips unfinished games', () => {

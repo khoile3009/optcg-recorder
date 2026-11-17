@@ -28,7 +28,7 @@ const COLOR_HEX = { Red: '#e5484d', Green: '#30a46c', Blue: '#3e8ed0', Purple: '
 let recs = []
 let status = null
 let selId = null
-const filters = { result: '', order: '', starred: false, me: [], opp: [], userTags: [], text: '' }
+const filters = { result: '', order: '', starred: false, misplays: false, me: [], opp: [], userTags: [], text: '' }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -218,6 +218,7 @@ const anyFilter = () =>
     filters.result ||
     filters.order ||
     filters.starred ||
+    filters.misplays ||
     filters.me.length ||
     filters.opp.length ||
     filters.userTags.length ||
@@ -234,12 +235,25 @@ $('starFilter').onclick = () => {
   filters.starred = !filters.starred
   renderAll()
 }
+$('misplayFilter').onclick = () => {
+  filters.misplays = !filters.misplays
+  renderAll()
+}
 $('search').oninput = (e) => {
   filters.text = e.target.value
   renderAll()
 }
 $('clearFilters').onclick = () => {
-  Object.assign(filters, { result: '', order: '', starred: false, me: [], opp: [], userTags: [], text: '' })
+  Object.assign(filters, {
+    result: '',
+    order: '',
+    starred: false,
+    misplays: false,
+    me: [],
+    opp: [],
+    userTags: [],
+    text: '',
+  })
   $('search').value = ''
   renderAll()
 }
@@ -248,6 +262,7 @@ function renderFilters() {
   for (const seg of document.querySelectorAll('.seg'))
     for (const b of seg.querySelectorAll('button')) b.classList.toggle('on', filters[seg.dataset.key] === b.dataset.v)
   $('starFilter').classList.toggle('on', filters.starred)
+  $('misplayFilter').classList.toggle('on', filters.misplays)
   renderStrip('me')
   renderStrip('opp')
 
@@ -498,6 +513,11 @@ function row(r) {
   const res = el('div', 'gres')
   if (r.status === 'recording') res.append(el('span', 'res live', 'REC'))
   else if (r.winnerSeat) res.append(el('span', `res ${r.winnerSeat === 1 ? 'w' : 'l'}`, r.winnerSeat === 1 ? 'W' : 'L'))
+  if (r.misplays?.length) {
+    const mp = el('span', 'res mp', `⚑ ${r.misplays.length}`)
+    mp.title = `${r.misplays.length} misplay${r.misplays.length === 1 ? '' : 's'} marked`
+    res.append(mp)
+  }
   if (r.starred) res.append(el('span', 'star', '★'))
   b.append(pair, body, res)
   b.onclick = () => select(r.id)
@@ -591,6 +611,7 @@ function renderDetail(r, fresh) {
   video.hidden = live
   renderTurns(r, live)
   renderEvents(r, live)
+  renderMisplays(fresh)
   if (fresh) {
     if (live) video.removeAttribute('src')
     else video.src = r.videoUrl
@@ -689,7 +710,8 @@ function drawEvents() {
   const box = $('events')
   const bar = $('eventBar')
   const dur = video.duration
-  box.hidden = !events.length || !Number.isFinite(dur) || dur <= 0
+  const marks = eventsRec?.misplays ?? []
+  box.hidden = !eventsRec || (!events.length && !marks.length) || !Number.isFinite(dur) || dur <= 0
   if (box.hidden) return bar.replaceChildren()
   const r = eventsRec
   const pct = (t) => `${Math.min(100, Math.max(0, (t / dur) * 100))}%`
@@ -727,17 +749,121 @@ function drawEvents() {
     }
     return b
   })
-  bar.replaceChildren(...bands, ...ticks)
+  const flags = marks.map((m) => {
+    const b = el('button', 'flag')
+    b.style.left = pct(m.t)
+    b.title = `${fmtClock(m.t)}  Misplay${m.turn ? ` · ${turnLabel(r, m.turn)}` : ''}${m.note ? `\n${m.note}` : ''}`
+    b.onclick = () => seekTo(m.t)
+    return b
+  })
+  bar.replaceChildren(...bands, ...ticks, ...flags)
 }
 video.addEventListener('durationchange', drawEvents)
 
+// N / P walk events and misplays together. Misplay times are already where to land.
 function stepEvent(dir) {
-  if (!events.length) return
-  const now = video.currentTime + EVENT_LEAD_S
-  const ts = events.map((e) => e.t)
+  const ts = [...events.map((e) => Math.max(0, e.t - EVENT_LEAD_S)), ...(eventsRec?.misplays ?? []).map((m) => m.t)]
+  if (!ts.length) return
+  ts.sort((a, b) => a - b)
+  const now = video.currentTime
   const t = dir > 0 ? ts.find((x) => x > now + 0.5) : ts.findLast((x) => x < now - 1.5)
-  if (t == null) return
-  video.currentTime = Math.max(0, t - EVENT_LEAD_S)
+  if (t != null) video.currentTime = t
+}
+
+function seekTo(t) {
+  video.currentTime = Math.max(0, t)
+  void video.play()
+}
+
+// ─── Misplays ─────────────────────────────────────────────────────────────
+// Marked while watching: the mark lands a few seconds before the key press, since you
+// notice a misplay after it happens. Stored as meta.misplays [{ t, turn, note }].
+const MISPLAY_LEAD_S = 3
+let misplayEdit = null // { t, turn, index } while the note box is open; index null = new mark
+
+function turnAt(r, t) {
+  let n = null
+  ;(r.turnTimes ?? []).forEach((x, i) => x <= t + TURN_LEAD_S && (n = i + 1))
+  return n
+}
+function turnLabel(r, n) {
+  const who = r.firstSeat ? (n % 2 === 1) === (r.firstSeat === 1) : null
+  return `T${n}${who === null ? '' : who ? ' · yours' : ' · opp'}`
+}
+const curRec = () => recs.find((x) => x.id === selId)
+
+function renderMisplays(fresh) {
+  const r = curRec()
+  const live = !r || r.status === 'recording' || !r.videoUrl
+  $('markMisplay').disabled = live
+  if (fresh) closeMisplay()
+  const list = live ? [] : (r.misplays ?? [])
+  $('misplaySection').hidden = !list.length
+  $('misplayCount').textContent = list.length ? String(list.length) : ''
+  $('misplayList').replaceChildren(
+    ...list.map((m, i) => {
+      const row = el('div', 'mpRow')
+      const seek = el('button', 'seek')
+      seek.title = 'Jump to this misplay'
+      seek.append(
+        el('span', 'time', fmtClock(m.t)),
+        el('span', 'who', m.turn ? turnLabel(r, m.turn) : '—'),
+        el('span', `note${m.note ? '' : ' empty'}`, m.note || 'No note'),
+      )
+      seek.onclick = () => seekTo(m.t)
+      const edit = el('button', 'mini', 'Edit')
+      edit.onclick = () => openMisplay(i)
+      const del = el('button', 'mini', '✕')
+      del.title = 'Remove this misplay'
+      del.onclick = () => saveMisplays(r.misplays.filter((_, j) => j !== i))
+      row.append(seek, edit, del)
+      return row
+    }),
+  )
+}
+
+function openMisplay(index = null) {
+  const r = curRec()
+  if (!r || video.hidden) return
+  video.pause()
+  const m = index == null ? null : r.misplays?.[index]
+  const t = m ? m.t : Math.max(0, video.currentTime - MISPLAY_LEAD_S)
+  const turn = m ? m.turn : turnAt(r, t)
+  misplayEdit = { t, turn, index }
+  $('misplayLabel').textContent = `⚑ ${m ? 'Edit misplay' : 'Misplay'} at ${fmtClock(t)}${turn ? ` · ${turnLabel(r, turn)}` : ''}`
+  $('misplayNote').value = m?.note ?? ''
+  $('misplayBox').hidden = false
+  $('misplayNote').focus()
+}
+
+function closeMisplay() {
+  misplayEdit = null
+  $('misplayBox').hidden = true
+  if (document.activeElement === $('misplayNote')) $('misplayNote').blur()
+}
+
+async function saveMisplays(list) {
+  if (selId) await api.update(selId, { misplays: list })
+}
+
+$('markMisplay').onclick = () => openMisplay()
+$('misplayCancel').onclick = closeMisplay
+$('misplayNote').onkeydown = (e) => {
+  if (e.key !== 'Escape') return
+  e.stopPropagation()
+  closeMisplay()
+}
+$('misplayBox').onsubmit = async (e) => {
+  e.preventDefault()
+  const r = curRec()
+  const edit = misplayEdit
+  if (!r || !edit) return closeMisplay()
+  const mark = { t: edit.t, turn: edit.turn, note: $('misplayNote').value.trim() }
+  const list = [...(r.misplays ?? [])]
+  if (edit.index == null) list.push(mark)
+  else list[edit.index] = mark
+  closeMisplay()
+  await saveMisplays(list)
 }
 
 function markRate(rate) {
@@ -773,7 +899,7 @@ $('del').onclick = async () => {
 }
 
 // Keyboard (when not typing): space play/pause, ←/→ seek 5 s, [ / ] previous/next turn,
-// , / . slower/faster. Esc closes overlays.
+// N / P next/previous event or misplay, M mark a misplay, , / . slower/faster. Esc closes overlays.
 const RATES = [1, 1.5, 2, 3]
 function stepTurn(dir) {
   if (!turnTimes.length) return
@@ -811,6 +937,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === '[') stepTurn(-1)
   else if (e.key === 'n' || e.key === 'N') stepEvent(1)
   else if (e.key === 'p' || e.key === 'P') stepEvent(-1)
+  else if (e.key === 'm' || e.key === 'M') openMisplay()
   else if (e.key === '.' || e.key === '>') stepRate(1)
   else if (e.key === ',' || e.key === '<') stepRate(-1)
   else return

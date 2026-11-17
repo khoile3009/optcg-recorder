@@ -122,14 +122,23 @@ export function titleFor(game) {
 /**
  * Search: every whitespace-separated token must match. "key:value" tokens
  * match a tag with that key whose value contains the text ("opp:xebec");
- * plain tokens match anywhere in tags, names, leader ids or notes.
+ * plain tokens match anywhere in tags, names, leader ids, notes or misplay notes.
  * Underscores stand in for spaces ("leader:monkey_d").
  */
 export function matchesQuery(rec, query) {
   const tokens = query.toLowerCase().split(/\s+/).filter(Boolean)
   if (tokens.length === 0) return true
   const tags = [...(rec.tags ?? []), ...(rec.userTags ?? [])].map((t) => t.toLowerCase())
-  const hay = [...tags, rec.title, rec.me?.name, rec.opp?.name, rec.me?.leaderId, rec.opp?.leaderId, rec.notes]
+  const hay = [
+    ...tags,
+    rec.title,
+    rec.me?.name,
+    rec.opp?.name,
+    rec.me?.leaderId,
+    rec.opp?.leaderId,
+    rec.notes,
+    ...(rec.misplays ?? []).map((m) => m.note),
+  ]
     .filter(Boolean)
     .join('\n')
     .toLowerCase()
@@ -143,13 +152,14 @@ export function matchesQuery(rec, query) {
 
 /**
  * Structured library filters (all optional): result 'win'|'loss', order
- * '1st'|'2nd', starred, me/opp leader ids (any of), userTags (all of), and the
- * free-text query.
+ * '1st'|'2nd', starred, misplays (has at least one), me/opp leader ids (any of),
+ * userTags (all of), and the free-text query.
  */
 export function matchesFilters(rec, f = {}) {
   if (f.result && rec.winnerSeat !== (f.result === 'win' ? 1 : 2)) return false
   if (f.order && rec.firstSeat !== (f.order === '1st' ? 1 : 2)) return false
   if (f.starred && !rec.starred) return false
+  if (f.misplays && !rec.misplays?.length) return false
   if (f.me?.length && !f.me.includes(rec.me?.leaderId)) return false
   if (f.opp?.length && !f.opp.includes(rec.opp?.leaderId)) return false
   const mine = (rec.userTags ?? []).map((t) => t.toLowerCase())
