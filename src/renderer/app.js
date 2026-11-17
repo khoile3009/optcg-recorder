@@ -700,7 +700,7 @@ function eventText(e) {
     const who = e.seat === 1 ? ' (you)' : e.seat === 2 ? ' (opponent)' : ''
     return `Trigger: ${e.card || '?'}${who}`
   }
-  const how = { concede: 'you conceded', opponent_concede: 'opponent conceded' }[e.reason] ?? ''
+  const how = { concede: 'you conceded', opponent_concede: 'opponent conceded', quit: 'you quit', opponent_quit: 'opponent quit' }[e.reason] ?? ''
   return `${e.seat === 1 ? 'You won' : e.seat === 2 ? 'You lost' : 'Game over'}${how ? ` · ${how}` : ''}`
 }
 

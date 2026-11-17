@@ -9,11 +9,16 @@
  *   [<name>] Chose to go First|Second
  *   RZ1|SEM|<seq>|<seat>|<b64 key>|...         key "Log.EndTurn" ends a turn
  *   RZ1|END|<seq>|<winnerSeat>|<reason>|<hash>
+ *   RZ1|SEM|<seq>|<seat>|<b64 "Log.Quit">|...  a player left; no END line follows
+ *
+ * A quit before the first DON!! draw is a lobby that never became a game (the
+ * sim also logs one at the top of some normal games), so it is ignored.
  */
 
 const ZWSP = /​/g
 // btoa, not Buffer: this module also runs in the (sandboxed) library window.
 const END_TURN_B64 = btoa('Log.EndTurn')
+const QUIT_B64 = btoa('Log.Quit')
 
 /** "Scarria​#1361" → "Scarria#1361" */
 export const cleanName = (n) => (n ?? '').replace(ZWSP, '').trim()
@@ -50,6 +55,16 @@ export function turnsStarted(text) {
   return 1 + countEndTurns(text)
 }
 
+/** The first seat to quit loses. */
+const quitResult = (seat) =>
+  seat === '1' ? { winnerSeat: 2, endReason: 'quit' } : { winnerSeat: 1, endReason: 'opponent_quit' }
+
+/** Has someone quit mid-game (the sim writes no END line then)? Works on partial logs. */
+export function quitMidGame(text) {
+  const don = text.indexOf(`|${FIRST_DON_B64}|`)
+  return don !== -1 && text.indexOf(`|${QUIT_B64}|`, don) !== -1
+}
+
 export function parseLog(text) {
   const seats = { 1: { name: '', leaderId: '', leaderName: '' }, 2: { name: '', leaderId: '', leaderName: '' } }
   const leaderNameByPlayer = new Map()
@@ -58,9 +73,17 @@ export function parseLog(text) {
   let choice = null
   let winnerSeat = null
   let endReason = null
+  let quit = null
+  let started = false
 
   for (const raw of text.split('\n')) {
     const line = raw.replace(/\r$/, '')
+    if (line.startsWith('RZ1|SEM|')) {
+      const f = line.split('|')
+      if (f[4] === FIRST_DON_B64) started = true
+      else if (f[4] === QUIT_B64 && started && !quit && (f[3] === '1' || f[3] === '2')) quit = quitResult(f[3])
+      continue
+    }
     if (line.startsWith('RZ1|PLY|')) {
       const [, , seat, name, leaderId] = line.split('|')
       if ((seat === '1' || seat === '2') && name) seats[seat] = { ...seats[seat], name: cleanName(name), leaderId: leaderId ?? '' }
@@ -85,6 +108,8 @@ export function parseLog(text) {
     }
   }
 
+  // The END line is authoritative; a mid-game quit stands in when there is none.
+  if (!winnerSeat && quit) ({ winnerSeat, endReason } = quit)
   for (const s of [1, 2]) seats[s].leaderName = leaderNameByPlayer.get(seats[s].name) ?? seats[s].leaderId
   if (chooser) {
     const chooserSeat = seats[1].name === chooser ? 1 : seats[2].name === chooser ? 2 : null
@@ -107,6 +132,8 @@ export function tagsFor(game, { finished = true } = {}) {
   if (game.winnerSeat) tags.push(game.winnerSeat === 1 ? 'win' : 'loss')
   if (game.endReason === 'concede') tags.push('i conceded')
   else if (game.endReason === 'opponent_concede') tags.push('opp conceded')
+  else if (game.endReason === 'quit') tags.push('i quit')
+  else if (game.endReason === 'opponent_quit') tags.push('opp quit')
   if (!finished || !game.winnerSeat) tags.push('unfinished')
   return tags
 }
@@ -218,6 +245,7 @@ export function logEvents(text) {
   const events = []
   let turn = 0
   let turnSeat = null // whose turn it is; known once a turn has ended
+  let ended = false
   for (const raw of text.split('\n')) {
     const line = raw.replace(/\r$/, '')
     if (line.startsWith('RZ1|PLY|')) {
@@ -226,6 +254,8 @@ export function logEvents(text) {
       continue
     }
     if (line.startsWith('RZ1|END|')) {
+      if (ended) continue
+      ended = true
       const f = line.split('|')
       events.push({ type: 'end', seat: f[3] === '1' || f[3] === '2' ? Number(f[3]) : null, turn, reason: f[4] || '' })
       continue
@@ -233,6 +263,14 @@ export function logEvents(text) {
     if (!line.startsWith('RZ1|SEM|')) continue
     const f = line.split('|')
     const key = f[4]
+    if (key === QUIT_B64) {
+      if (turn > 0 && !ended && (f[3] === '1' || f[3] === '2')) {
+        ended = true
+        const q = quitResult(f[3])
+        events.push({ type: 'end', seat: q.winnerSeat, turn, reason: q.endReason })
+      }
+      continue
+    }
     if (key === DON_KEY && turn === 0) turn = 1
     else if (key === END_TURN_B64) {
       turn++
@@ -251,4 +289,24 @@ export function logEvents(text) {
     events.push({ type, seat, turn, card: card.name })
   }
   return events
+}
+
+/**
+ * For a saved recording without a result: the result patch its log now yields
+ * (e.g. a quit read by a newer parser), or null. Tags not derived from the log
+ * ('interrupted', 'no video') are kept.
+ */
+export function backfillResult(meta, text) {
+  if (meta.winnerSeat || !text) return null
+  const game = parseLog(text)
+  if (!game.winnerSeat) return null
+  const old = tagsFor({ ...game, winnerSeat: null, endReason: null })
+  const extra = (meta.tags ?? []).filter((t) => !old.includes(t))
+  return {
+    winnerSeat: game.winnerSeat,
+    endReason: game.endReason,
+    turns: game.turns,
+    tags: [...tagsFor(game), ...extra],
+    title: titleFor(game),
+  }
 }

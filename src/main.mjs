@@ -18,7 +18,7 @@ import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { logEvents, parseLog, parseLogFileName, tagsFor, titleFor, turnsStarted } from './logtags.mjs'
+import { backfillResult, logEvents, parseLog, parseLogFileName, quitMidGame, tagsFor, titleFor, turnsStarted } from './logtags.mjs'
 import { ASSETS, mergeLeaders, parseLeaders } from './leaderdb.mjs'
 import { LEADERS as BUNDLED_LEADERS } from './data/leaders.mjs'
 import { installUpdate, startUpdateChecks } from './updater.mjs'
@@ -222,6 +222,21 @@ async function updateMeta(id, patch) {
   return withUrls(next)
 }
 
+/** Give saved games without a result the one their log now yields (e.g. quits, which older versions missed). */
+async function backfillResults() {
+  for (const m of listRecordings()) {
+    if (m.status !== 'done' || m.winnerSeat || !idOk(m.id)) continue
+    let text = ''
+    try {
+      text = await fsp.readFile(path.join(libDir, `${m.id}.log`), 'utf8')
+    } catch {
+      continue
+    }
+    const patch = backfillResult(m, text)
+    if (patch) await updateMeta(m.id, patch).catch(() => {})
+  }
+}
+
 function sendLibrary() {
   libraryWin?.webContents.send('app:event', { type: 'library' })
 }
@@ -344,8 +359,16 @@ async function finalize(cur) {
   const base = readJson(metaPath(cur.id), { id: cur.id, userTags: [], notes: '', starred: false })
 
   // The finished log can lag the partial's END line by a moment; wait briefly.
+  // After a quit there is no finished log: the partial is the whole game.
   let logFile = null
-  for (let i = 0; i < 10 && !logFile; i++) {
+  if (cur.stopReason === 'quit' && cur.partial) {
+    try {
+      cur.lastText = await fsp.readFile(path.join(sourceDir(), cur.partial), 'utf8')
+    } catch {
+      /* keep the last poll's text */
+    }
+  }
+  for (let i = 0; i < 10 && !logFile && cur.stopReason !== 'quit'; i++) {
     logFile = await findFinishedLog(cur)
     if (!logFile) await new Promise((r) => setTimeout(r, 1500))
   }
@@ -479,9 +502,11 @@ async function tick() {
       // No timestamps in the log: stamp each new turn when we first see it.
       for (let n = turnsStarted(rec.lastText); rec.turnAt.length < n; ) rec.turnAt.push(now)
       for (let n = logEvents(rec.lastText).length; rec.eventAt.length < n; ) rec.eventAt.push(now)
-      if (rec.lastText.includes('\nRZ1|END|')) {
+      // A quit ends the game too, but the sim writes no END line and never closes the partial.
+      const quit = !rec.lastText.includes('\nRZ1|END|') && quitMidGame(rec.lastText)
+      if (quit || rec.lastText.includes('\nRZ1|END|')) {
         rec.endSeenAt ??= now
-        if (now - rec.endSeenAt >= TAIL_MS) stopRecording('game over')
+        if (now - rec.endSeenAt >= TAIL_MS) stopRecording(quit ? 'quit' : 'game over')
       } else if (now - cur.mtime > STALE_MS) {
         stopRecording('abandoned')
       } else {
@@ -734,6 +759,7 @@ else {
     protocol.handle('card', serveCard)
     // Recordings interrupted by a crash or a closed app: mark them, keep the video.
     for (const m of listRecordings()) if (m.status === 'recording') await updateMeta(m.id, { status: 'done', tags: [...(m.tags ?? []), 'interrupted'] })
+    await backfillResults()
 
     // getDisplayMedia in the recorder window gets the source we pick here; no picker UI.
     // 'loopback' is the whole system mix (Windows can't capture one window's audio).

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { countEndTurns, logEvents, matchesQuery, matchupStats, parseLog, parseLogFileName, tagsFor, titleFor, turnsStarted } from '../src/logtags.mjs'
+import { countEndTurns, backfillResult, logEvents, quitMidGame, matchesQuery, matchupStats, parseLog, parseLogFileName, tagsFor, titleFor, turnsStarted } from '../src/logtags.mjs'
 
 const b64 = (s) => Buffer.from(s).toString('base64')
 const ZW = '​'
@@ -191,4 +191,68 @@ test('logEvents: hits, K.O.s, triggers and the end, with turn and side', () => {
   // Mirror match: the leader can't tell the sides apart, so the non-turn player was hit.
   assert.equal(logEvents(lines(true))[0].seat, 1)
   assert.deepEqual(logEvents(''), [])
+})
+
+test('a mid-game quit decides the game when there is no END line', () => {
+  const sem = (seq, seat, key) => `RZ1|SEM|${seq}|${seat}|${b64(key)}|||-999|-999`
+  const game = (...rest) =>
+    [
+      `RZ1|PLY|1|Alice${ZW}#1111|OP15-058`,
+      `RZ1|PLY|2|Bob${ZW}#2222|OP17-039`,
+      sem(1, 1, 'Log.DrawDon'),
+      sem(2, 1, 'Log.EndTurn'),
+      ...rest,
+    ].join('\r\n')
+
+  const oppQuit = game(sem(3, 2, 'Log.Quit'), `[Bob${ZW}#2222] Quits!`, sem(4, 1, 'Log.Quit'))
+  const g = parseLog(oppQuit)
+  assert.equal(g.winnerSeat, 1)
+  assert.equal(g.endReason, 'opponent_quit')
+  assert.equal(g.turns, 2)
+  assert.ok(tagsFor(g).includes('opp quit'))
+  assert.ok(!tagsFor(g).includes('unfinished'))
+  assert.ok(quitMidGame(oppQuit))
+  assert.deepEqual(logEvents(oppQuit).at(-1), { type: 'end', seat: 1, turn: 2, reason: 'opponent_quit' })
+  assert.equal(logEvents(oppQuit).filter((e) => e.type === 'end').length, 1)
+
+  const iQuit = parseLog(game(sem(3, 1, 'Log.Quit')))
+  assert.equal(iQuit.winnerSeat, 2)
+  assert.ok(tagsFor(iQuit).includes('i quit'))
+
+  // The END line wins over a quit.
+  const both = game(sem(3, 1, 'Log.Quit'), 'RZ1|END|5|1|opponent_concede|x')
+  assert.equal(parseLog(both).winnerSeat, 1)
+  assert.equal(parseLog(both).endReason, 'opponent_concede')
+})
+
+test('a quit before the first DON!! draw is not a result', () => {
+  const quit = `RZ1|SEM|1|2|${b64('Log.Quit')}|||-999|-999`
+  const lobby = [`RZ1|PLY|1|Alice${ZW}#1111|OP15-058`, quit].join('\r\n')
+  assert.equal(parseLog(lobby).winnerSeat, null)
+  assert.ok(!quitMidGame(lobby))
+  assert.deepEqual(logEvents(lobby), [])
+  // The sim logs a quit at the top of some normal games; the END line still decides them.
+  const normal = [quit, `RZ1|SEM|2|1|${b64('Log.DrawDon')}|x`, 'RZ1|END|9|2|concede|x'].join('\r\n')
+  assert.equal(parseLog(normal).winnerSeat, 2)
+  assert.equal(parseLog(normal).endReason, 'concede')
+})
+
+test('backfillResult fills in a saved game the log now decides, keeping other tags', () => {
+  const sem = (seq, seat, key) => `RZ1|SEM|${seq}|${seat}|${b64(key)}|||-999|-999`
+  const text = [
+    `RZ1|PLY|1|Alice${ZW}#1111|OP15-058`,
+    `RZ1|PLY|2|Bob${ZW}#2222|OP17-039`,
+    `[Alice${ZW}#1111] Leader is Enel [<mark><link="OP15-058">OP15-058</link></mark>]`,
+    `[Bob${ZW}#2222] Leader is Monkey.D.Luffy [<mark><link="OP17-039">OP17-039</link></mark>]`,
+    sem(1, 1, 'Log.DrawDon'),
+    sem(2, 2, 'Log.Quit'),
+  ].join('\r\n')
+  const meta = { winnerSeat: null, tags: ['leader:Enel', 'opp:Monkey.D.Luffy', 'vs:Bob', 'unfinished', 'interrupted'] }
+  const patch = backfillResult(meta, text)
+  assert.equal(patch.winnerSeat, 1)
+  assert.equal(patch.endReason, 'opponent_quit')
+  assert.deepEqual(patch.tags, ['leader:Enel', 'opp:Monkey.D.Luffy', 'vs:Bob', 'win', 'opp quit', 'interrupted'])
+  assert.equal(patch.title, 'Enel vs Monkey.D.Luffy · W')
+  assert.equal(backfillResult({ ...meta, winnerSeat: 2 }, text), null)
+  assert.equal(backfillResult(meta, text.replace(/\r\nRZ1\|SEM\|2\|.*$/, '')), null)
 })
