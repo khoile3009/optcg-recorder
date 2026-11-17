@@ -182,3 +182,63 @@ export function matchupStats(recs) {
     .map(([leaderId, games]) => ({ leaderId, ...recordStats(games) }))
     .sort((a, b) => b.games - a.games || b.wins + b.losses - (a.wins + a.losses) || a.leaderId.localeCompare(b.leaderId))
 }
+
+const EV_KEYS = { [btoa('Log.LeaderHit')]: 'hit', [btoa('Log.Destroyed')]: 'ko', [btoa('Log.UseTrigger')]: 'trigger' }
+const DON_KEY = btoa('Log.DrawDon')
+const b64text = (s) => {
+  try {
+    return new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0)))
+  } catch {
+    return ''
+  }
+}
+/** `Gloriosa [<mark><link="OP17-046">OP17-046</link></mark>]` → { name, id } */
+const cardRef = (s) => ({ name: s.replace(/\s*\[.*$/, '').trim(), id: /link="([^"]+)"/.exec(s)?.[1] ?? '' })
+
+/**
+ * Highlight events in log order, picked from the event-frequency study (about 16 per game):
+ * leader hits (`seat` lost a life), K.O.s (`seat` owned the card), [Trigger]s
+ * (`seat` activated it) and the game end (`seat` won). `turn` is the overall turn
+ * number (0 = before the first turn). Append-only on partial logs, so callers can
+ * stamp new entries by index as they appear.
+ * @returns {{type: 'hit'|'ko'|'trigger'|'end', seat: 1|2|null, turn: number, card?: string, reason?: string}[]}
+ */
+export function logEvents(text) {
+  const leaderOf = { 1: '', 2: '' }
+  const events = []
+  let turn = 0
+  let turnSeat = null // whose turn it is; known once a turn has ended
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/\r$/, '')
+    if (line.startsWith('RZ1|PLY|')) {
+      const [, , seat, , leaderId] = line.split('|')
+      if (seat === '1' || seat === '2') leaderOf[seat] = leaderId ?? ''
+      continue
+    }
+    if (line.startsWith('RZ1|END|')) {
+      const f = line.split('|')
+      events.push({ type: 'end', seat: f[3] === '1' || f[3] === '2' ? Number(f[3]) : null, turn, reason: f[4] || '' })
+      continue
+    }
+    if (!line.startsWith('RZ1|SEM|')) continue
+    const f = line.split('|')
+    const key = f[4]
+    if (key === DON_KEY && turn === 0) turn = 1
+    else if (key === END_TURN_B64) {
+      turn++
+      turnSeat = f[3] === '1' ? 2 : f[3] === '2' ? 1 : null
+    }
+    const type = EV_KEYS[key]
+    if (!type) continue
+    const card = cardRef(b64text(f[5] ?? ''))
+    let seat = f[3] === '1' || f[3] === '2' ? Number(f[3]) : null
+    if (type === 'hit') {
+      // Logged with seat 0; the hit leader names the side, unless both play the same leader.
+      const m1 = card.id && card.id === leaderOf[1]
+      const m2 = card.id && card.id === leaderOf[2]
+      seat = m1 && !m2 ? 1 : m2 && !m1 ? 2 : turnSeat ? (turnSeat === 1 ? 2 : 1) : null
+    }
+    events.push({ type, seat, turn, card: card.name })
+  }
+  return events
+}

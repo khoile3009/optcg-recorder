@@ -18,7 +18,7 @@ import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { parseLog, parseLogFileName, tagsFor, titleFor, turnsStarted } from './logtags.mjs'
+import { logEvents, parseLog, parseLogFileName, tagsFor, titleFor, turnsStarted } from './logtags.mjs'
 import { ASSETS, mergeLeaders, parseLeaders } from './leaderdb.mjs'
 import { LEADERS as BUNDLED_LEADERS } from './data/leaders.mjs'
 import { installUpdate, startUpdateChecks } from './updater.mjs'
@@ -265,7 +265,7 @@ async function startRecording({ partial = null, manual = false } = {}) {
   let id = localStamp()
   while (fs.existsSync(metaPath(id))) id += '-b'
   const startMs = Date.now()
-  rec = { id, startMs, videoStartMs: null, turnAt: [], partial, manual, bytes: 0, stopping: false, endSeenAt: null, lastText: '' }
+  rec = { id, startMs, videoStartMs: null, turnAt: [], eventAt: [], partial, manual, bytes: 0, stopping: false, endSeenAt: null, lastText: '' }
   rec.stream = fs.createWriteStream(path.join(libDir, `${id}.webm`))
   await writeJson(metaPath(id), {
     id,
@@ -380,6 +380,7 @@ async function finalize(cur) {
           endReason: game.endReason,
           turns: game.turns,
           turnTimes: turnTimesFor(cur),
+          events: eventsFor(cur, text),
           tags: tagsFor(game, { finished }),
           title: titleFor(game),
         }
@@ -390,6 +391,17 @@ async function finalize(cur) {
   sendLibrary()
   if (Notification.isSupported())
     new Notification({ title: 'Game saved', body: `${meta.title}  (${Math.round(durationMs / 60000)} min)` }).show()
+}
+
+/**
+ * Highlight events with their video time. Events the watcher never saw (the log's tail
+ * after the last poll) have no time and are left out.
+ */
+function eventsFor(cur, text) {
+  const t0 = cur.videoStartMs ?? cur.startMs
+  return logEvents(text)
+    .map((e, i) => (cur.eventAt[i] == null ? null : { ...e, t: Math.max(0, Math.round((cur.eventAt[i] - t0) / 100) / 10) }))
+    .filter(Boolean)
 }
 
 /** Seconds into the video at which each turn began (as far as the watcher saw). */
@@ -466,6 +478,7 @@ async function tick() {
       }
       // No timestamps in the log: stamp each new turn when we first see it.
       for (let n = turnsStarted(rec.lastText); rec.turnAt.length < n; ) rec.turnAt.push(now)
+      for (let n = logEvents(rec.lastText).length; rec.eventAt.length < n; ) rec.eventAt.push(now)
       if (rec.lastText.includes('\nRZ1|END|')) {
         rec.endSeenAt ??= now
         if (now - rec.endSeenAt >= TAIL_MS) stopRecording('game over')

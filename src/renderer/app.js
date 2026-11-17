@@ -590,6 +590,7 @@ function renderDetail(r, fresh) {
   $('live').hidden = !live
   video.hidden = live
   renderTurns(r, live)
+  renderEvents(r, live)
   if (fresh) {
     if (live) video.removeAttribute('src')
     else video.src = r.videoUrl
@@ -654,6 +655,90 @@ function markTurn() {
   $('turns').querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', i === cur))
 }
 video.addEventListener('timeupdate', markTurn)
+
+// Event markers. Stamped by the same 2s poll as turns; land a bit earlier still so the
+// play that caused the event is on screen.
+const EVENT_LEAD_S = 3
+const MERGE_FRAC = 0.01 // ticks closer than 1% of the bar become one, with a count
+let events = []
+let eventsRec = null
+
+function renderEvents(r, live) {
+  eventsRec = live ? null : r
+  events = live ? [] : (r.events ?? [])
+  drawEvents()
+}
+
+function eventText(e) {
+  if (e.type === 'hit') return e.seat === 1 ? 'You lost a life' : e.seat === 2 ? 'Opponent lost a life' : 'Life lost'
+  if (e.type === 'ko') {
+    const side = e.seat === 1 ? ' (yours)' : e.seat === 2 ? " (opponent's)" : ''
+    return `K.O.: ${e.card || 'a character'}${side}`
+  }
+  if (e.type === 'trigger') {
+    const who = e.seat === 1 ? ' (you)' : e.seat === 2 ? ' (opponent)' : ''
+    return `Trigger: ${e.card || '?'}${who}`
+  }
+  const how = { concede: 'you conceded', opponent_concede: 'opponent conceded' }[e.reason] ?? ''
+  return `${e.seat === 1 ? 'You won' : e.seat === 2 ? 'You lost' : 'Game over'}${how ? ` · ${how}` : ''}`
+}
+
+const EVENT_RANK = { end: 4, hit: 3, trigger: 2, ko: 1 }
+
+function drawEvents() {
+  const box = $('events')
+  const bar = $('eventBar')
+  const dur = video.duration
+  box.hidden = !events.length || !Number.isFinite(dur) || dur <= 0
+  if (box.hidden) return bar.replaceChildren()
+  const r = eventsRec
+  const pct = (t) => `${Math.min(100, Math.max(0, (t / dur) * 100))}%`
+  const mine = (n) => (r.firstSeat ? (n % 2 === 1) === (r.firstSeat === 1) : null)
+
+  // Faint bands behind your turns.
+  const tt = r.turnTimes ?? []
+  const bands = []
+  tt.forEach((t, i) => {
+    if (!mine(i + 1)) return
+    const b = el('div', 'band')
+    b.style.left = pct(t)
+    b.style.width = `calc(${pct(tt[i + 1] ?? dur)} - ${pct(t)})`
+    bands.push(b)
+  })
+
+  const groups = []
+  for (const e of events) {
+    const g = groups.at(-1)
+    if (g && (e.t - g.t) / dur < MERGE_FRAC) g.items.push(e)
+    else groups.push({ t: e.t, items: [e] })
+  }
+  const ticks = groups.map((g) => {
+    const top = g.items.reduce((a, b) => (EVENT_RANK[b.type] > EVENT_RANK[a.type] ? b : a))
+    const seatCls = top.type === 'hit' ? (top.seat === 1 ? ' me' : top.seat === 2 ? ' opp' : '') : ''
+    const b = el('button', `tick ${top.type}${seatCls}`)
+    b.style.left = pct(g.t)
+    if (g.items.length > 1) b.append(el('span', 'count', String(g.items.length)))
+    const who = top.turn ? mine(top.turn) : null
+    const turn = top.turn ? `T${top.turn}${who === null ? '' : who ? ' (yours)' : ' (opponent)'} · ` : ''
+    b.title = `${fmtClock(g.t)}  ${turn}${g.items.map(eventText).join('\n')}`
+    b.onclick = () => {
+      video.currentTime = Math.max(0, g.t - EVENT_LEAD_S)
+      void video.play()
+    }
+    return b
+  })
+  bar.replaceChildren(...bands, ...ticks)
+}
+video.addEventListener('durationchange', drawEvents)
+
+function stepEvent(dir) {
+  if (!events.length) return
+  const now = video.currentTime + EVENT_LEAD_S
+  const ts = events.map((e) => e.t)
+  const t = dir > 0 ? ts.find((x) => x > now + 0.5) : ts.findLast((x) => x < now - 1.5)
+  if (t == null) return
+  video.currentTime = Math.max(0, t - EVENT_LEAD_S)
+}
 
 function markRate(rate) {
   for (const b of document.querySelectorAll('.speed button')) b.classList.toggle('on', Number(b.dataset.rate) === rate)
@@ -724,6 +809,8 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowLeft') video.currentTime = Math.max(0, video.currentTime - 5)
   else if (e.key === ']') stepTurn(1)
   else if (e.key === '[') stepTurn(-1)
+  else if (e.key === 'n' || e.key === 'N') stepEvent(1)
+  else if (e.key === 'p' || e.key === 'P') stepEvent(-1)
   else if (e.key === '.' || e.key === '>') stepRate(1)
   else if (e.key === ',' || e.key === '<') stepRate(-1)
   else return

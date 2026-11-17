@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { countEndTurns, matchesQuery, matchupStats, parseLog, parseLogFileName, tagsFor, titleFor, turnsStarted } from '../src/logtags.mjs'
+import { countEndTurns, logEvents, matchesQuery, matchupStats, parseLog, parseLogFileName, tagsFor, titleFor, turnsStarted } from '../src/logtags.mjs'
 
 const b64 = (s) => Buffer.from(s).toString('base64')
 const ZW = '​'
@@ -159,4 +159,32 @@ test('turns started: none before the first DON!! draw, then one per end-of-turn'
   assert.equal(turnsStarted(['RZ1|META|x|0', 'mulligan...'].join('\n')), 0)
   assert.equal(turnsStarted([don].join('\n')), 1)
   assert.equal(turnsStarted([don, end(6), don, end(7)].join('\n')), 3)
+})
+
+test('logEvents: hits, K.O.s, triggers and the end, with turn and side', () => {
+  const ref = (name, id) => b64(`${name} [<mark><link="${id}">${id}</link></mark>]`)
+  const sem = (seq, seat, key, a = '') => `RZ1|SEM|${seq}|${seat}|${b64(key)}|${a}||-999|-999`
+  const lines = (mirror) =>
+    [
+      `RZ1|PLY|1|Alice${ZW}#1111|OP15-058`,
+      `RZ1|PLY|2|Bob${ZW}#2222|${mirror ? 'OP15-058' : 'OP17-039'}`,
+      sem(1, 1, 'Log.DrawDon'),
+      sem(2, 1, 'Log.EndTurn'),
+      sem(3, 0, 'Log.LeaderHit', ref('Enel', 'OP15-058')), // turn 2 (Bob's): Alice's leader hit
+      sem(4, 1, 'Log.Destroyed', ref('Gloriosa', 'OP17-046')),
+      sem(5, 2, 'Log.EndTurn'),
+      sem(6, 2, 'Log.UseTrigger', ref('Cross Guild', 'OP09-057')),
+      sem(7, 1, 'Log.Attack'),
+      'RZ1|END|8|1|opponent_concede|abc',
+    ].join('\r\n')
+
+  assert.deepEqual(logEvents(lines(false)), [
+    { type: 'hit', seat: 1, turn: 2, card: 'Enel' },
+    { type: 'ko', seat: 1, turn: 2, card: 'Gloriosa' },
+    { type: 'trigger', seat: 2, turn: 3, card: 'Cross Guild' },
+    { type: 'end', seat: 1, turn: 3, reason: 'opponent_concede' },
+  ])
+  // Mirror match: the leader can't tell the sides apart, so the non-turn player was hit.
+  assert.equal(logEvents(lines(true))[0].seat, 1)
+  assert.deepEqual(logEvents(''), [])
 })

@@ -32,6 +32,10 @@ sim and it records; finished games show up in the library.
 The player has a row of turn buttons: click **3** to jump to the start of turn 3.
 Highlighted buttons are your turns; the current turn is filled in as you watch.
 
+Above them, an event strip marks the big moments: lost lives (red for yours, gold for
+your opponent's), K.O.s, Triggers and the end of the game. Click a marker to jump to a
+few seconds before it. Games recorded before v0.5 have no markers.
+
 Keyboard shortcuts in the player:
 
 | Key | Action |
@@ -39,6 +43,7 @@ Keyboard shortcuts in the player:
 | `Space` | play / pause |
 | `←` / `→` | back / forward 5 seconds |
 | `[` / `]` | previous / next turn |
+| `N` / `P` | next / previous event |
 | `,` / `.` | slower / faster (1×, 1.5×, 2×, 3×) |
 
 Above the filters, **Matchups** shows your win rate against each opposing leader,
