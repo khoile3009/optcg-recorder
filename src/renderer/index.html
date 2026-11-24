@@ -14,6 +14,7 @@
       <div class="brand"><span class="logo">●</span> OPTCG Recorder</div>
       <div id="state" class="pill idle"><span class="dot"></span><span id="stateText">Idle</span></div>
       <div class="grow"></div>
+      <button id="upgradeBtn" class="primary" hidden title="Start recording video for the rest of this game">● Record this game</button>
       <button id="recBtn" class="primary">Record now</button>
       <button id="settingsBtn" class="icon" title="Settings">⚙</button>
       <div id="settings" class="popover" hidden>
@@ -27,7 +28,14 @@
           >Capture
           <select id="capture"></select>
         </label>
-        <label class="toggle"><input type="checkbox" id="autoRec" /><span></span> Auto-record when a game starts</label>
+        <div class="field"
+          >When a game starts
+          <div id="gameStart" class="seg modeSeg">
+            <button data-v="record">Record video</button><button data-v="track">Track only</button
+            ><button data-v="off">Off</button>
+          </div>
+          <span id="gameStartHint" class="hint"></span>
+        </div>
         <h3>Audio</h3>
         <label class="toggle"><input type="checkbox" id="sysAudio" /><span></span> Record game sound</label>
         <span class="hint">Captures everything your PC plays (Windows can't isolate one app), so mute music or calls you don't want in the video.</span>
@@ -116,19 +124,28 @@
         <div id="empty" class="empty">
           <div class="emptyIcon">▶</div>
           <h2>No game selected</h2>
-          <p>Start a game in OPTCG Sim and it records automatically. Finished games appear on the left.</p>
+          <p id="emptyText">Start a game in OPTCG Sim and it records automatically. Finished games appear on the left.</p>
         </div>
         <div id="detail" hidden>
           <div id="banner" class="banner"></div>
-          <div class="player">
+          <div id="player" class="player">
             <video id="video" controls preload="metadata"></video>
             <div id="live" class="live" hidden>
               <span class="dot"></span>
               <div>
-                <b>Recording in progress</b>
-                <p>The video becomes playable as soon as the game ends.</p>
+                <b id="liveTitle">Recording in progress</b>
+                <p id="liveText">The video becomes playable as soon as the game ends.</p>
               </div>
             </div>
+          </div>
+          <div id="trackedView" class="trackedView" hidden>
+            <div class="tvHead">
+              <span class="tvBadge">Tracked · no video</span>
+              <span class="muted">Saved from the sim's log</span>
+              <button id="openLog" class="mini">Open log</button>
+            </div>
+            <div id="tvStats" class="tvStats"></div>
+            <div id="tvTimeline" class="tvTimeline"></div>
           </div>
           <div id="events" class="events" hidden>
             <div id="eventBar" class="eventBar"></div>
@@ -141,6 +158,7 @@
           <form id="misplayBox" class="misplayBox" hidden>
             <div id="misplayLabel" class="misplayLabel"></div>
             <div class="misplayRow">
+              <select id="misplayTurn" hidden title="Which turn"></select>
               <input id="misplayNote" placeholder="What went wrong? (optional)" maxlength="500" />
               <button type="submit" class="primary">Save</button>
               <button type="button" id="misplayCancel">Cancel</button>
@@ -148,13 +166,13 @@
             <div class="hint">Enter to save · Esc to cancel</div>
           </form>
           <div class="toolbar">
-            <div class="speed">
+            <div id="speed" class="speed">
               <button data-rate="1">1×</button><button data-rate="1.5">1.5×</button><button data-rate="2">2×</button
               ><button data-rate="3">3×</button>
             </div>
             <button id="markMisplay" class="markBtn" title="Mark a misplay 3 s before now (M)">⚑ Mark misplay</button>
             <div id="facts" class="facts"></div>
-            <div class="keysWrap">
+            <div id="keysWrap" class="keysWrap">
               <button id="keysBtn" class="keys" aria-expanded="false" title="Keyboard shortcuts">⌨ Shortcuts</button>
               <div id="keysPanel" class="keysPanel" hidden>
                 <div><kbd>Space</kbd><span>Play / pause</span></div>

@@ -86,6 +86,9 @@ let settings = {
   ...readJson(settingsPath, {}),
 }
 const saveSettings = () => writeJson(settingsPath, settings)
+const GAME_START_MODES = ['record', 'track', 'off']
+// What a new game does: record video, track it from the log only, or nothing. Older settings had autoRecord.
+if (!GAME_START_MODES.includes(settings.onGameStart)) settings.onGameStart = settings.autoRecord === false ? 'off' : 'record'
 if (typeof settings.libDir === 'string' && settings.libDir) libDir = settings.libDir
 
 // ─── Sim folder ───────────────────────────────────────────────────────────
@@ -282,13 +285,16 @@ async function pickSource() {
   )
 }
 
-async function startRecording({ partial = null, manual = false } = {}) {
+/**
+ * Start a game entry. track = log only: no video, no capture window; the meta is
+ * built from the sim's log exactly like a recording's.
+ */
+async function startRecording({ partial = null, manual = false, track = false } = {}) {
   if (rec || libMoving) return
   let id = localStamp()
   while (fs.existsSync(metaPath(id))) id += '-b'
   const startMs = Date.now()
-  rec = { id, startMs, videoStartMs: null, turnAt: [], eventAt: [], partial, manual, bytes: 0, stopping: false, endSeenAt: null, lastText: '' }
-  rec.stream = fs.createWriteStream(path.join(libDir, `${id}.webm`))
+  rec = { id, startMs, videoStartMs: track ? startMs : null, turnAt: [], eventAt: [], partial, manual, track, bytes: 0, stopping: false, endSeenAt: null, lastText: '' }
   await writeJson(metaPath(id), {
     id,
     startedAt: new Date(startMs).toISOString(),
@@ -298,17 +304,48 @@ async function startRecording({ partial = null, manual = false } = {}) {
     userTags: [],
     notes: '',
     starred: false,
+    ...(track ? { tracked: true } : {}),
   })
+  if (track) {
+    sendStatus()
+    sendLibrary()
+    return
+  }
+  await beginVideo(rec)
+  sendStatus()
+  sendLibrary()
+}
+
+/** Open the .webm and start capturing for this entry. */
+async function beginVideo(cur) {
+  cur.stream = fs.createWriteStream(path.join(libDir, `${cur.id}.webm`))
   await ensureRecorderWindow()
   const q = quality()
   recorderWin.webContents.send('rec:start', {
-    id,
+    id: cur.id,
     fps: q.fps,
     height: q.height,
     bitrate: q.mbps * 1_000_000,
     systemAudio: !!settings.systemAudio,
     mic: settings.mic ? { deviceId: settings.micDevice || 'default', gain: settings.micGain ?? 1 } : null,
   })
+}
+
+/**
+ * Switch the tracked game in progress to a recording from now on. The video starts
+ * mid-game, so turns and events seen before it sit at t=0.
+ */
+async function upgradeToVideo() {
+  if (!rec?.track || rec.stopping) return
+  const cur = rec
+  cur.track = false
+  cur.videoStartMs = null
+  const m = readJson(metaPath(cur.id), null)
+  if (m) {
+    const { tracked: _t, ...rest } = m
+    await writeJson(metaPath(cur.id), { ...rest, joinedLate: true })
+  }
+  await beginVideo(cur)
   sendStatus()
   sendLibrary()
 }
@@ -319,6 +356,7 @@ function stopRecording(reason) {
   rec.stopping = true
   rec.stopReason = reason
   const cur = rec
+  if (cur.track) return void finalize(cur)
   recorderWin?.webContents.send('rec:stop', { id: cur.id })
   cur.stopTimer = setTimeout(() => void finalize(cur), 8000)
   sendStatus()
@@ -327,6 +365,7 @@ function stopRecording(reason) {
 ipcMain.on('rec:chunk', (_e, id, data) => {
   if (rec?.id !== id) return
   const buf = Buffer.from(data)
+  if (!rec.stream) return
   rec.bytes += buf.length
   rec.stream.write(buf)
 })
@@ -356,7 +395,7 @@ async function finalize(cur) {
   if (cur.finalized) return
   cur.finalized = true
   clearTimeout(cur.stopTimer)
-  await new Promise((r) => cur.stream.end(r))
+  if (cur.stream) await new Promise((r) => cur.stream.end(r))
   if (rec === cur) rec = null
   sendStatus()
 
@@ -416,7 +455,10 @@ async function finalize(cur) {
         }
       : { tags: ['no log'], title: cur.manual ? 'Manual recording' : 'Unknown game' }),
   }
-  if (size === 0) meta.tags = [...meta.tags, 'no video']
+  if (cur.track) {
+    meta.tracked = true
+    meta.tags = [...meta.tags, 'tracked']
+  } else if (size === 0) meta.tags = [...meta.tags, 'no video']
   await writeJson(metaPath(cur.id), meta)
   sendLibrary()
   if (Notification.isSupported())
@@ -528,13 +570,13 @@ async function tick() {
 
   if (rec) sendStatus() // keep the size readout moving
 
-  if (!rec && settings.autoRecord) {
+  if (!rec && settings.onGameStart !== 'off') {
     const fresh = partials
       .filter((p) => !ignoredPartials.has(p.n) && now - p.mtime < FRESH_MS)
       .sort((a, b) => b.mtime - a.mtime)[0]
     if (fresh) {
       ignoredPartials.add(fresh.n)
-      await startRecording({ partial: fresh.n })
+      await startRecording({ partial: fresh.n, track: settings.onGameStart === 'track' })
     }
   }
 }
@@ -602,7 +644,8 @@ function status() {
     sourceDir: sourceDir(),
     detectedDir: sourceDir() ? null : detectSourceDir(),
     libDir,
-    autoRecord: settings.autoRecord,
+    autoRecord: settings.onGameStart !== 'off',
+    onGameStart: settings.onGameStart,
     capture: settings.capture,
     quality: settings.quality,
     systemAudio: !!settings.systemAudio,
@@ -610,7 +653,7 @@ function status() {
     micDevice: settings.micDevice || 'default',
     micGain: settings.micGain ?? 1,
     qualities: Object.entries(QUALITY).map(([key, q]) => ({ key, label: q.label, mbPerMin: Math.round((q.mbps * 60) / 8) })),
-    recording: rec && { id: rec.id, startMs: rec.startMs, bytes: rec.bytes, manual: rec.manual, stopping: rec.stopping },
+    recording: rec && { id: rec.id, startMs: rec.startMs, bytes: rec.bytes, manual: rec.manual, track: !!rec.track, turn: rec.turnAt.length, stopping: rec.stopping },
     lastError,
     update,
     crewlog: crewlogStatus(),
@@ -748,7 +791,12 @@ ipcMain.handle('lib:reveal', (_e, id) => {
   if (idOk(id) && fs.existsSync(path.join(libDir, `${id}.webm`))) shell.showItemInFolder(path.join(libDir, `${id}.webm`))
   else void shell.openPath(libDir)
 })
-ipcMain.handle('rec:manualStart', () => startRecording({ manual: true }))
+ipcMain.handle('lib:openLog', (_e, id) => {
+  const log = idOk(id) && path.join(libDir, `${id}.log`)
+  if (log && fs.existsSync(log)) shell.showItemInFolder(log)
+})
+ipcMain.handle('rec:manualStart', (_e, opts) => startRecording({ manual: true, track: !!opts?.track }))
+ipcMain.handle('rec:upgrade', () => upgradeToVideo())
 ipcMain.handle('rec:manualStop', () => stopRecording('manual'))
 ipcMain.handle('app:listSources', async () => {
   const sources = await captureSources()
@@ -756,7 +804,9 @@ ipcMain.handle('app:listSources', async () => {
 })
 ipcMain.handle('app:setSettings', async (_e, patch) => {
   if (patch.capture != null) settings.capture = String(patch.capture)
-  if (patch.autoRecord != null) settings.autoRecord = !!patch.autoRecord
+  if (GAME_START_MODES.includes(patch.onGameStart)) settings.onGameStart = patch.onGameStart
+  else if (patch.autoRecord != null) settings.onGameStart = patch.autoRecord ? 'record' : 'off'
+  settings.autoRecord = settings.onGameStart !== 'off'
   if (patch.quality != null && QUALITY[patch.quality]) settings.quality = patch.quality
   if (patch.systemAudio != null) settings.systemAudio = !!patch.systemAudio
   if (patch.mic != null) settings.mic = !!patch.mic

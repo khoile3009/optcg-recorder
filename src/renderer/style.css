@@ -14,6 +14,7 @@
   --loss: #ff6369;
   --rec: #ff4d4f;
   --misplay: #ff8a3d;
+  --track: #40c8be;
   --radius: 12px;
   color-scheme: dark;
 }
@@ -958,14 +959,18 @@ main {
 .mpRow .note.empty {
   color: var(--muted);
 }
-.mpRow .mini {
+.mpRow .mini,
+.tvHead .mini,
+.tvFlag {
   padding: 2px 7px;
   font-size: 12px;
   color: var(--muted);
   border-color: transparent;
   background: none;
 }
-.mpRow .mini:hover {
+.mpRow .mini:hover,
+.tvHead .mini:hover,
+.tvFlag:hover {
   color: var(--text);
   background: rgba(255, 255, 255, 0.08);
 }
@@ -1537,4 +1542,187 @@ main {
 #folderHint {
   white-space: pre-line;
   overflow-wrap: anywhere;
+}
+
+/* ─── Tracked games (no video) ─────────────────────────────────────────── */
+.pill.track {
+  color: #fff;
+  border-color: rgba(64, 200, 190, 0.45);
+  background: rgba(64, 200, 190, 0.12);
+}
+.pill.track .dot {
+  background: var(--track);
+}
+.modeSeg {
+  margin-top: 4px;
+}
+.res.live.trk {
+  background: rgba(64, 200, 190, 0.18);
+  color: var(--track);
+}
+.res.lg {
+  background: rgba(64, 200, 190, 0.1);
+  color: var(--track);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.live.trk .dot {
+  background: var(--track);
+  animation: none;
+}
+.trackedView {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+}
+.trackedView[hidden] {
+  display: none;
+}
+.tvHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tvHead .mini {
+  margin-left: auto;
+  border: 1px solid var(--line2);
+}
+.tvBadge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--track);
+  background: rgba(64, 200, 190, 0.12);
+  border: 1px solid rgba(64, 200, 190, 0.35);
+}
+.tvStats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.tvTile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-width: 0;
+}
+.tvTile b {
+  font-size: 15px;
+  text-transform: capitalize;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tvTile.w b {
+  color: var(--win);
+}
+.tvTile.l b {
+  color: var(--loss);
+}
+.tvLabel {
+  font-size: 11px;
+  color: var(--muted);
+}
+.tvTimeline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.tvTurn {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.tvTurn.flash {
+  animation: tvFlash 1.2s ease-out;
+}
+@keyframes tvFlash {
+  0% {
+    border-color: var(--misplay);
+    background: rgba(255, 138, 61, 0.12);
+  }
+  100% {
+    border-color: var(--line);
+    background: transparent;
+  }
+}
+.tvTurnHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  border-left: 3px solid var(--line);
+  padding-left: 7px;
+}
+.tvTurnHead.me {
+  border-left-color: var(--accent);
+}
+.tvTurnHead.opp {
+  border-left-color: var(--muted);
+}
+.tvClock {
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.tvFlag {
+  margin-left: auto;
+  opacity: 0.45;
+  color: var(--misplay);
+}
+.tvTurn:hover .tvFlag,
+.tvFlag:focus-visible {
+  opacity: 1;
+}
+.tvEv {
+  font-size: 12px;
+  color: var(--text2);
+  padding: 2px 0 0 10px;
+}
+.tvEv.hit {
+  color: var(--rec);
+}
+.tvEv.ko {
+  color: var(--loss);
+}
+.tvEv.trigger {
+  color: var(--accent);
+}
+.tvEv.end {
+  color: var(--win);
+  font-weight: 600;
+}
+.tvEv.misplay {
+  color: var(--misplay);
+}
+#misplayTurn {
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg2, #1a1d24);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+}
+#misplayTurn[hidden] {
+  display: none;
+}
+@media (max-width: 720px) {
+  .tvStats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }

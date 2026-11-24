@@ -86,18 +86,36 @@ $('updateBtn').onclick = async () => {
 function renderStatus() {
   if (!status) return
   const r = status.recording
-  $('state').className = `pill ${r ? 'rec' : status.sourceDir && status.autoRecord ? 'armed' : 'idle'}`
+  const mode = status.onGameStart ?? (status.autoRecord ? 'record' : 'off')
+  $('state').className = `pill ${r ? (r.track ? 'track' : 'rec') : status.sourceDir && mode !== 'off' ? 'armed' : 'idle'}`
   $('stateText').textContent = r
-    ? `${r.stopping ? 'Saving…' : 'Recording'} ${fmtDur(Date.now() - r.startMs)} · ${fmtSize(r.bytes)}`
+    ? r.stopping
+      ? 'Saving…'
+      : r.track
+        ? `Tracking · T${Math.max(1, r.turn ?? 0)} · ${fmtDur(Date.now() - r.startMs)}`
+        : `Recording ${fmtDur(Date.now() - r.startMs)} · ${fmtSize(r.bytes)}`
     : !status.sourceDir
       ? 'Choose the sim folder'
-      : status.autoRecord
-        ? 'Waiting for a game'
-        : 'Auto-record off'
-  $('recBtn').textContent = r ? '■ Stop' : '● Record now'
+      : mode === 'track'
+        ? 'Waiting for a game (track only)'
+        : mode === 'record'
+          ? 'Waiting for a game'
+          : 'Auto off'
+  $('recBtn').textContent = r ? (r.track ? '■ Stop tracking' : '■ Stop') : mode === 'track' ? '● Track now' : '● Record now'
   $('recBtn').classList.toggle('stop', !!r)
   $('recBtn').disabled = !!r?.stopping
-  $('autoRec').checked = status.autoRecord
+  $('upgradeBtn').hidden = !(r?.track && !r.stopping)
+  for (const b of $('gameStart').querySelectorAll('button')) b.classList.toggle('on', b.dataset.v === mode)
+  $('gameStartHint').textContent = {
+    record: 'Records video and saves the game summary.',
+    track: 'Saves result, turns, events and the log. No video, no disk space.',
+    off: 'Nothing happens until you press Record now.',
+  }[mode]
+  $('emptyText').textContent = {
+    record: 'Start a game in OPTCG Sim and it records automatically. Finished games appear on the left.',
+    track: 'Start a game in OPTCG Sim and it is tracked automatically (no video). Finished games appear on the left.',
+    off: 'Auto is off. Press Record now to capture a game. Finished games appear on the left.',
+  }[mode]
   $('sysAudio').checked = !!status.systemAudio
   $('micOn').checked = !!status.mic
   $('micOpts').hidden = !status.mic
@@ -183,7 +201,16 @@ async function loadMics() {
   sel.value = want
 }
 
-$('recBtn').onclick = () => (status?.recording ? api.stop() : api.start())
+$('recBtn').onclick = () =>
+  status?.recording ? api.stop() : api.start({ track: (status?.onGameStart ?? 'record') === 'track' })
+$('upgradeBtn').onclick = async () => {
+  $('upgradeBtn').disabled = true
+  try {
+    await api.upgrade()
+  } finally {
+    $('upgradeBtn').disabled = false
+  }
+}
 $('sysAudio').onchange = (e) => api.setSettings({ systemAudio: e.target.checked })
 $('micOn').onchange = async (e) => {
   status = await api.setSettings({ mic: e.target.checked })
@@ -194,7 +221,11 @@ $('micDevice').onfocus = loadMics
 $('micDevice').onchange = (e) => api.setSettings({ micDevice: e.target.value })
 $('micGain').oninput = (e) => ($('micGainLabel').textContent = `${Math.round(e.target.value * 100)}%`)
 $('micGain').onchange = (e) => api.setSettings({ micGain: Number(e.target.value) })
-$('autoRec').onchange = (e) => api.setSettings({ autoRecord: e.target.checked })
+for (const b of $('gameStart').querySelectorAll('button'))
+  b.onclick = async () => {
+    status = await api.setSettings({ onGameStart: b.dataset.v })
+    renderStatus()
+  }
 $('quality').onchange = (e) => api.setSettings({ quality: e.target.value })
 $('capture').onfocus = loadSources
 $('capture').onchange = (e) => api.setSettings({ capture: e.target.value })
@@ -300,7 +331,7 @@ const anyFilter = () =>
     filters.text
   )
 
-for (const seg of document.querySelectorAll('.seg'))
+for (const seg of document.querySelectorAll('.seg[data-key]'))
   for (const b of seg.querySelectorAll('button'))
     b.onclick = () => {
       filters[seg.dataset.key] = b.dataset.v
@@ -334,7 +365,7 @@ $('clearFilters').onclick = () => {
 }
 
 function renderFilters() {
-  for (const seg of document.querySelectorAll('.seg'))
+  for (const seg of document.querySelectorAll('.seg[data-key]'))
     for (const b of seg.querySelectorAll('button')) b.classList.toggle('on', filters[seg.dataset.key] === b.dataset.v)
   $('starFilter').classList.toggle('on', filters.starred)
   $('misplayFilter').classList.toggle('on', filters.misplays)
@@ -586,12 +617,17 @@ function row(r) {
   if (r.opp?.name) bits.push(shortName(r.opp.name))
   body.append(top, el('div', 'gsub', bits.filter(Boolean).join(' · ')))
   const res = el('div', 'gres')
-  if (r.status === 'recording') res.append(el('span', 'res live', 'REC'))
+  if (r.status === 'recording') res.append(el('span', `res live${r.tracked ? ' trk' : ''}`, r.tracked ? 'TRK' : 'REC'))
   else if (r.winnerSeat) res.append(el('span', `res ${r.winnerSeat === 1 ? 'w' : 'l'}`, r.winnerSeat === 1 ? 'W' : 'L'))
   if (r.misplays?.length) {
     const mp = el('span', 'res mp', `⚑ ${r.misplays.length}`)
     mp.title = `${r.misplays.length} misplay${r.misplays.length === 1 ? '' : 's'} marked`
     res.append(mp)
+  }
+  if (r.tracked && r.status !== 'recording') {
+    const lg = el('span', 'res lg', 'log')
+    lg.title = 'Tracked only: result and log, no video'
+    res.append(lg)
   }
   if (r.starred) res.append(el('span', 'star', '★'))
   b.append(pair, body, res)
@@ -644,7 +680,7 @@ function bannerSide(s, label, won) {
 
 function renderDetail(r, fresh) {
   const mid = el('div', 'bmid')
-  if (r.status === 'recording') mid.append(el('span', 'res live big', 'LIVE'))
+  if (r.status === 'recording') mid.append(el('span', `res live big${r.tracked ? ' trk' : ''}`, r.tracked ? 'TRACKING' : 'LIVE'))
   else if (r.winnerSeat)
     mid.append(el('span', `res big ${r.winnerSeat === 1 ? 'w' : 'l'}`, r.winnerSeat === 1 ? 'Victory' : 'Defeat'))
   else mid.append(el('span', 'res big', 'Unfinished'))
@@ -681,13 +717,25 @@ function renderDetail(r, fresh) {
   if (fresh) $('userTagInput').value = ''
   $('del').disabled = r.status === 'recording'
 
+  const tracked = isTracked(r)
   const live = r.status === 'recording' || !r.videoUrl
-  $('live').hidden = !live
-  video.hidden = live
-  renderTurns(r, live)
-  renderEvents(r, live)
+  $('player').hidden = tracked
+  $('trackedView').hidden = !tracked
+  for (const id of ['speed', 'keysWrap']) $(id).hidden = tracked || live
+  $('live').hidden = !live || tracked
+  $('live').classList.toggle('trk', !!r.tracked)
+  $('liveTitle').textContent = r.tracked ? 'Tracking this game' : 'Recording in progress'
+  $('liveText').textContent = r.tracked
+    ? 'Result, turns and events are saved when it ends. No video.'
+    : 'The video becomes playable as soon as the game ends.'
+  video.hidden = live || tracked
+  renderTurns(r, live || tracked)
+  renderEvents(r, live || tracked)
+  if (tracked) renderTracked(r)
   renderMisplays(fresh)
-  if (fresh) {
+  if (tracked) {
+    if (fresh) video.removeAttribute('src')
+  } else if (fresh) {
     if (live) video.removeAttribute('src')
     else video.src = r.videoUrl
     video.playbackRate = 1
@@ -850,6 +898,68 @@ function seekTo(t) {
   void video.play()
 }
 
+// ─── Tracked games (no video) ─────────────────────────────────────────────
+// A tracked game keeps the log's result, turn stamps and events. Times are a game
+// clock (seconds since the game started), so misplays are marked per turn.
+const isTracked = (r) => !!r?.tracked && r.status !== 'recording'
+
+function renderTracked(r) {
+  const tile = (label, value, cls = '') => {
+    const d = el('div', `tvTile ${cls}`)
+    d.append(el('span', 'tvLabel', label), el('b', null, value))
+    return d
+  }
+  const tt = r.turnTimes ?? []
+  const len = r.durationMs ? fmtDur(r.durationMs) : tt.length ? `${fmtClock(tt.at(-1))}+` : '—'
+  const res = r.winnerSeat === 1 ? ['Win', 'w'] : r.winnerSeat === 2 ? ['Loss', 'l'] : ['Unfinished', '']
+  $('tvStats').replaceChildren(
+    tile('Result', res[0], res[1]),
+    tile('Ended by', r.endReason ? r.endReason.replace(/_/g, ' ') : r.winnerSeat ? 'life out' : '—'),
+    tile('Turns', String(trackedTurns(r) || '—')),
+    tile('Length', len),
+  )
+  const evs = r.events ?? []
+  const marks = r.misplays ?? []
+  const count = trackedTurns(r)
+  const groups = []
+  for (let n = 1; n <= count; n++) {
+    const g = el('div', 'tvTurn')
+    g.dataset.turn = String(n)
+    const who = r.firstSeat ? (n % 2 === 1) === (r.firstSeat === 1) : null
+    const head = el('div', `tvTurnHead${who === null ? '' : who ? ' me' : ' opp'}`)
+    const flag = el('button', 'mini tvFlag', '⚑')
+    flag.title = `Mark a misplay on turn ${n}`
+    flag.onclick = () => openMisplay(null, n)
+    head.append(el('span', 'tvT', turnLabel(r, n)), el('span', 'tvClock', tt[n - 1] != null ? fmtClock(tt[n - 1]) : ''), flag)
+    g.append(head)
+    for (const e of evs.filter((x) => x.turn === n)) g.append(el('div', `tvEv ${e.type}`, eventText(e)))
+    for (const m of marks.filter((x) => x.turn === n))
+      g.append(el('div', 'tvEv misplay', `⚑ Misplay${m.note ? `: ${m.note}` : ''}`))
+    groups.push(g)
+  }
+  for (const e of evs.filter((x) => !x.turn)) groups.push(el('div', `tvEv ${e.type}`, eventText(e)))
+  if (!groups.length) groups.push(el('div', 'muted', 'No turns or events were found in the log.'))
+  $('tvTimeline').replaceChildren(...groups)
+}
+
+function scrollToTurn(n) {
+  const g = $('tvTimeline').querySelector(`[data-turn="${n}"]`)
+  if (!g) return
+  g.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  g.classList.remove('flash')
+  void g.offsetWidth
+  g.classList.add('flash')
+}
+
+/** How many turns a tracked game has to mark on. */
+function trackedTurns(r) {
+  return Math.max(r.turnTimes?.length ?? 0, r.turns ?? 0, ...(r.events ?? []).map((e) => e.turn ?? 0))
+}
+/** A tracked mark's t: its turn's start on the game clock. */
+const turnStart = (r, n) => r.turnTimes?.[n - 1] ?? 0
+
+$('openLog').onclick = () => selId && api.openLog(selId)
+
 // ─── Misplays ─────────────────────────────────────────────────────────────
 // Marked while watching: the mark lands a few seconds before the key press, since you
 // notice a misplay after it happens. Stored as meta.misplays [{ t, turn, note }].
@@ -869,8 +979,10 @@ const curRec = () => recs.find((x) => x.id === selId)
 
 function renderMisplays(fresh) {
   const r = curRec()
-  const live = !r || r.status === 'recording' || !r.videoUrl
-  $('markMisplay').disabled = live
+  const tracked = isTracked(r)
+  const live = !r || r.status === 'recording' || (!r.videoUrl && !tracked)
+  $('markMisplay').disabled = live || (tracked && !trackedTurns(r))
+  $('markMisplay').title = tracked ? 'Mark a misplay on a turn (M)' : 'Mark a misplay 3 s before now (M)'
   if (fresh) closeMisplay()
   const list = live ? [] : (r.misplays ?? [])
   $('misplaySection').hidden = !list.length
@@ -879,13 +991,13 @@ function renderMisplays(fresh) {
     ...list.map((m, i) => {
       const row = el('div', 'mpRow')
       const seek = el('button', 'seek')
-      seek.title = 'Jump to this misplay'
+      seek.title = tracked ? 'Show this turn' : 'Jump to this misplay'
       seek.append(
-        el('span', 'time', fmtClock(m.t)),
+        el('span', 'time', tracked ? (m.turn ? `T${m.turn}` : '—') : fmtClock(m.t)),
         el('span', 'who', m.turn ? turnLabel(r, m.turn) : '—'),
         el('span', `note${m.note ? '' : ' empty'}`, m.note || 'No note'),
       )
-      seek.onclick = () => seekTo(m.t)
+      seek.onclick = () => (tracked ? m.turn && scrollToTurn(m.turn) : seekTo(m.t))
       const edit = el('button', 'mini', 'Edit')
       edit.onclick = () => openMisplay(i)
       const del = el('button', 'mini', '✕')
@@ -897,9 +1009,33 @@ function renderMisplays(fresh) {
   )
 }
 
-function openMisplay(index = null) {
+function openMisplay(index = null, onTurn = null) {
   const r = curRec()
-  if (!r || video.hidden) return
+  if (!r) return
+  const sel = $('misplayTurn')
+  if (isTracked(r)) {
+    const n = trackedTurns(r)
+    if (!n) return
+    const m = index == null ? null : r.misplays?.[index]
+    const turn = Math.min(Math.max(m?.turn ?? onTurn ?? n, 1), n)
+    sel.replaceChildren(
+      ...Array.from({ length: n }, (_, i) => {
+        const o = el('option', null, turnLabel(r, i + 1))
+        o.value = String(i + 1)
+        return o
+      }),
+    )
+    sel.value = String(turn)
+    sel.hidden = false
+    misplayEdit = { t: turnStart(r, turn), turn, index, tracked: true }
+    $('misplayLabel').textContent = `⚑ ${m ? 'Edit misplay' : 'Misplay'} on`
+    $('misplayNote').value = m?.note ?? ''
+    $('misplayBox').hidden = false
+    $('misplayNote').focus()
+    return
+  }
+  if (video.hidden) return
+  sel.hidden = true
   video.pause()
   const m = index == null ? null : r.misplays?.[index]
   const t = m ? m.t : Math.max(0, video.currentTime - MISPLAY_LEAD_S)
@@ -933,7 +1069,12 @@ $('misplayBox').onsubmit = async (e) => {
   const r = curRec()
   const edit = misplayEdit
   if (!r || !edit) return closeMisplay()
-  const mark = { t: edit.t, turn: edit.turn, note: $('misplayNote').value.trim() }
+  let { t, turn } = edit
+  if (edit.tracked) {
+    turn = Number($('misplayTurn').value) || null
+    t = turn ? turnStart(r, turn) : 0
+  }
+  const mark = { t, turn, note: $('misplayNote').value.trim() }
   const list = [...(r.misplays ?? [])]
   if (edit.index == null) list.push(mark)
   else list[edit.index] = mark
@@ -967,7 +1108,7 @@ $('notes').onchange = () => selId && api.update(selId, { notes: $('notes').value
 $('reveal').onclick = () => api.reveal(selId)
 $('del').onclick = async () => {
   const r = recs.find((x) => x.id === selId)
-  if (!r || !confirm(`Delete "${r.title}"? The video file is removed permanently.`)) return
+  if (!r || !confirm(`Delete "${r.title}"? Its ${r.tracked ? 'log' : 'video'} file is removed permanently.`)) return
   video.removeAttribute('src')
   video.load()
   await api.remove(r.id)
@@ -1012,8 +1153,14 @@ document.addEventListener('keydown', (e) => {
     toggleKeys(false)
     return
   }
-  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) || $('detail').hidden || video.hidden)
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) || $('detail').hidden) return
+  if (video.hidden) {
+    if ((e.key === 'm' || e.key === 'M') && isTracked(curRec())) {
+      e.preventDefault()
+      openMisplay()
+    }
     return
+  }
   if (e.key === ' ') {
     e.preventDefault()
     if (video.paused) void video.play()
