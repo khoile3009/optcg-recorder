@@ -1331,6 +1331,15 @@ main {
 .hint code {
   color: var(--text2);
 }
+.hint.good {
+  color: var(--win);
+}
+.hint.bad {
+  color: var(--loss);
+}
+.hint a {
+  color: var(--accent);
+}
 
 /* Sidebar sections keep their natural height so the sidebar itself scrolls
    instead of squeezing the strips and list to nothing. */
@@ -1523,4 +1532,9 @@ main {
 .avatar.xs .noimg {
   border-width: 1px;
   font-size: 8px;
+}
+
+#folderHint {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }

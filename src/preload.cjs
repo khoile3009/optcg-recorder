@@ -15,8 +15,13 @@ contextBridge.exposeInMainWorld('recorder', {
   setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch),
   chooseSourceDir: () => ipcRenderer.invoke('app:chooseSourceDir'),
   useSourceDir: (dir) => ipcRenderer.invoke('app:useSourceDir', dir),
+  chooseLibDir: () => ipcRenderer.invoke('app:chooseLibDir'),
   installUpdate: () => ipcRenderer.invoke('app:installUpdate'),
   openUpdatePage: () => ipcRenderer.invoke('app:openUpdatePage'),
+  crewlogSet: (patch) => ipcRenderer.invoke('crewlog:set', patch),
+  crewlogCheck: () => ipcRenderer.invoke('crewlog:check'),
+  crewlogForget: () => ipcRenderer.invoke('crewlog:forget'),
+  crewlogOpen: (url) => ipcRenderer.invoke('crewlog:open', url),
   onEvent: (cb) => {
     const l = (_e, ev) => cb(ev)
     ipcRenderer.on('app:event', l)

@@ -12,7 +12,7 @@
  *
  * Library layout (userData/recordings):  <id>.webm  <id>.json  <id>.log
  */
-import { app, BrowserWindow, Notification, desktopCapturer, dialog, ipcMain, net, protocol, session, shell } from 'electron'
+import { app, BrowserWindow, Notification, desktopCapturer, dialog, ipcMain, net, protocol, safeStorage, session, shell } from 'electron'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import os from 'node:os'
@@ -22,6 +22,8 @@ import { backfillResult, logEvents, parseLog, parseLogFileName, quitMidGame, tag
 import { ASSETS, mergeLeaders, parseLeaders } from './leaderdb.mjs'
 import { LEADERS as BUNDLED_LEADERS } from './data/leaders.mjs'
 import { installUpdate, startUpdateChecks } from './updater.mjs'
+import { libDirProblem, moveRecordings, recordingIds, writableProblem } from './libmove.mjs'
+import { CODE_RE, DEFAULT_BASE, createCrewlog, normalizeBase } from './crewlog.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const POLL_MS = 2000
@@ -34,7 +36,11 @@ const TAIL_MS = 4000
 const AUTOSAVED = path.join('Builds_Windows', 'CombatLogs', 'AutoSaved')
 
 const userData = app.getPath('userData')
-const libDir = path.join(userData, 'recordings')
+const defaultLibDir = path.join(userData, 'recordings')
+/** The recordings folder: settings.libDir when the user picked one. Set after settings load. */
+let libDir = defaultLibDir
+/** True while the library is switching folders (recording is held off). */
+let libMoving = false
 const settingsPath = path.join(userData, 'settings.json')
 
 let libraryWin = null
@@ -80,6 +86,7 @@ let settings = {
   ...readJson(settingsPath, {}),
 }
 const saveSettings = () => writeJson(settingsPath, settings)
+if (typeof settings.libDir === 'string' && settings.libDir) libDir = settings.libDir
 
 // ─── Sim folder ───────────────────────────────────────────────────────────
 
@@ -276,7 +283,7 @@ async function pickSource() {
 }
 
 async function startRecording({ partial = null, manual = false } = {}) {
-  if (rec) return
+  if (rec || libMoving) return
   let id = localStamp()
   while (fs.existsSync(metaPath(id))) id += '-b'
   const startMs = Date.now()
@@ -414,6 +421,7 @@ async function finalize(cur) {
   sendLibrary()
   if (Notification.isSupported())
     new Notification({ title: 'Game saved', body: `${meta.title}  (${Math.round(durationMs / 60000)} min)` }).show()
+  if (finished && game && crewlogHasCode()) void crewlog.enqueue(meta, leaders)
 }
 
 /**
@@ -605,8 +613,98 @@ function status() {
     recording: rec && { id: rec.id, startMs: rec.startMs, bytes: rec.bytes, manual: rec.manual, stopping: rec.stopping },
     lastError,
     update,
+    crewlog: crewlogStatus(),
   }
 }
+
+// ─── Crewlog ──────────────────────────────────────────────────────────────
+// The connector code lives only in crewlog.key, encrypted with safeStorage. It is
+// decrypted per request and only ever sent to the configured base URL.
+
+const crewlogKeyPath = path.join(userData, 'crewlog.key')
+const crewlogOutboxPath = path.join(userData, 'crewlog-outbox.json')
+const crewlogBase = () => normalizeBase(settings.crewlogBase) ?? DEFAULT_BASE
+const crewlogHasCode = () => fs.existsSync(crewlogKeyPath)
+function crewlogCode() {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return null
+    return safeStorage.decryptString(fs.readFileSync(crewlogKeyPath))
+  } catch {
+    return null
+  }
+}
+/** The last thing worth telling the user: { ok, text, url?, at }. */
+let crewlogLast = null
+let crewlogWasBlocked = null
+
+function notify(title, body, onClick) {
+  if (!Notification.isSupported()) return
+  const n = new Notification({ title, body })
+  if (onClick) n.on('click', onClick)
+  n.show()
+}
+function openCrewlogUrl(url) {
+  try {
+    if (new URL(url).origin === crewlogBase()) void shell.openExternal(url)
+  } catch {}
+}
+
+const crewlog = createCrewlog({
+  fetch: (url, opts) => net.fetch(url, opts),
+  getConfig: () => ({ base: crewlogBase(), code: crewlogCode() }),
+  load: () => readJson(crewlogOutboxPath, []),
+  save: (list) => writeJson(crewlogOutboxPath, list),
+  log: (msg) => console.error(msg),
+  onEvent: (ev) => {
+    if (ev.type === 'logged') {
+      const text = `Logged to Crewlog${ev.newSession ? " · Started today's sim session" : ''}`
+      crewlogLast = { ok: true, text, url: ev.url, at: Date.now() }
+      notify('Logged to Crewlog', ev.newSession ? "Started today's sim session" : ev.handle ? `as @${ev.handle}` : 'Game added', ev.url ? () => openCrewlogUrl(ev.url) : null)
+    } else if (ev.type === 'dropped') {
+      crewlogLast = { ok: false, text: `Crewlog didn't take a game: ${ev.error}`, at: Date.now() }
+    } else if (ev.type === 'unknownLeader') {
+      crewlogLast = { ok: false, text: "Can't log, unknown leader", at: Date.now() }
+      notify('Not logged to Crewlog', "Can't log, unknown leader")
+    } else if (ev.type === 'state') {
+      const { blocked, error } = crewlog.state()
+      if (blocked && blocked !== crewlogWasBlocked)
+        notify('Crewlog stopped logging', blocked === 'unauthorized' ? `${error} Make a new code in Crewlog and paste it in Settings.` : error)
+      crewlogWasBlocked = blocked
+    }
+    sendStatus()
+  },
+})
+
+function crewlogStatus() {
+  const s = crewlog.state()
+  return { hasCode: crewlogHasCode(), base: crewlogBase(), ...s, last: crewlogLast }
+}
+
+/** { code?, base? }: a new code and/or base URL, then a connection check. */
+ipcMain.handle('crewlog:set', async (_e, patch = {}) => {
+  if (patch.base != null) {
+    const base = normalizeBase(patch.base)
+    if (!base) return { ok: false, error: 'Use an https:// address (http:// only for localhost), with no path.' }
+    settings.crewlogBase = base
+    await saveSettings()
+  }
+  const code = String(patch.code ?? '').trim()
+  if (code) {
+    if (!CODE_RE.test(code)) return { ok: false, error: 'A connector code is crw_ followed by 40 letters and digits.' }
+    if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: "This PC can't store the code securely, so it wasn't saved." }
+    await fsp.writeFile(crewlogKeyPath, safeStorage.encryptString(code))
+  }
+  crewlog.reset()
+  if (!crewlogHasCode()) return { ok: true }
+  return crewlog.check()
+})
+ipcMain.handle('crewlog:check', () => (crewlogHasCode() ? crewlog.check() : { ok: false, error: 'Paste a connector code first.' }))
+ipcMain.handle('crewlog:forget', async () => {
+  await fsp.rm(crewlogKeyPath, { force: true })
+  crewlog.reset()
+  return { ok: true }
+})
+ipcMain.handle('crewlog:open', (_e, url) => openCrewlogUrl(String(url ?? '')))
 
 /** Newer release found: {version, ready} (installed build) or {version, url} (portable). */
 let update = null
@@ -677,6 +775,55 @@ ipcMain.handle('app:chooseSourceDir', async () => {
   return !r.canceled && r.filePaths[0] ? setSourceDir(r.filePaths[0]) : status()
 })
 ipcMain.handle('app:useSourceDir', (_e, dir) => setSourceDir(dir))
+ipcMain.handle('app:chooseLibDir', async () => {
+  const busy = () => (rec ? 'Finish the current recording first.' : libMoving ? 'Already changing the folder.' : null)
+  if (busy()) return { ...status(), pickError: busy() }
+  const r = await dialog.showOpenDialog(libraryWin, {
+    title: 'Choose where recordings are saved',
+    defaultPath: libDir,
+    properties: ['openDirectory', 'createDirectory'],
+  })
+  const to = !r.canceled && r.filePaths[0]
+  if (!to) return status()
+  const problem = libDirProblem(libDir, to) ?? (await writableProblem(to))
+  if (problem) return { ...status(), pickError: problem }
+
+  const n = recordingIds(libDir).length
+  let move = false
+  if (n) {
+    const games = n === 1 ? '1 game' : `${n} games`
+    const { response } = await dialog.showMessageBox(libraryWin, {
+      type: 'question',
+      title: 'Recordings folder',
+      message: `Move your ${games} to the new folder?`,
+      detail: `From: ${libDir}\nTo: ${to}\n\nIf you leave them, they stay in the old folder and won't show in the library unless you switch back to it.`,
+      buttons: [`Move ${games}`, 'Leave them', 'Cancel'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    })
+    if (response === 2) return status()
+    move = response === 0
+  }
+  if (busy()) return { ...status(), pickError: busy() } // a game started while the dialog was open
+
+  libMoving = true
+  let moved = null
+  try {
+    if (move) {
+      sendStatus()
+      moved = await moveRecordings(libDir, to)
+    }
+    libDir = to
+    settings.libDir = to
+    await saveSettings()
+  } finally {
+    libMoving = false
+  }
+  sendLibrary()
+  sendStatus()
+  return { ...status(), moved }
+})
 
 // ─── Card images ──────────────────────────────────────────────────────────
 // card://img/OP18-022[?small] → the sim's own art when we know its folder (works
@@ -755,11 +902,19 @@ else {
 
   app.whenReady().then(async () => {
     app.setAppUserModelId('OPTCG Recorder')
-    await fsp.mkdir(libDir, { recursive: true })
+    try {
+      await fsp.mkdir(libDir, { recursive: true })
+    } catch (e) {
+      // The chosen folder is gone (e.g. an unplugged drive): record to the default for now.
+      lastError = `Recordings folder ${libDir} is unavailable (${e.code ?? e.message}); saving to ${defaultLibDir} for now.`
+      libDir = defaultLibDir
+      await fsp.mkdir(libDir, { recursive: true })
+    }
     protocol.handle('card', serveCard)
     // Recordings interrupted by a crash or a closed app: mark them, keep the video.
     for (const m of listRecordings()) if (m.status === 'recording') await updateMeta(m.id, { status: 'done', tags: [...(m.tags ?? []), 'interrupted'] })
     await backfillResults()
+    void crewlog.flush() // games that didn't make it last time
 
     // getDisplayMedia in the recorder window gets the source we pick here; no picker UI.
     // 'loopback' is the whole system mix (Windows can't capture one window's audio).

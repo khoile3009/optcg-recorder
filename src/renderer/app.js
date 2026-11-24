@@ -103,9 +103,16 @@ function renderStatus() {
   $('micOpts').hidden = !status.mic
   if (document.activeElement !== $('micGain')) $('micGain').value = status.micGain ?? 1
   $('micGainLabel').textContent = `${Math.round(($('micGain').value || 1) * 100)}%`
-  $('folderHint').textContent = status.sourceDir ? `Watching ${status.sourceDir}` : 'No sim folder chosen yet.'
-  $('error').hidden = !status.lastError
-  $('error').textContent = status.lastError ?? ''
+  $('folderHint').textContent = [
+    status.sourceDir ? `Watching ${status.sourceDir}` : 'No sim folder chosen yet.',
+    status.libDir ? `Recordings saved to ${status.libDir}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+  const crwProblem = status.crewlog?.blocked ? `Crewlog: ${status.crewlog.error}` : null
+  $('error').hidden = !(status.lastError || crwProblem)
+  $('error').textContent = status.lastError ?? crwProblem ?? ''
+  renderCrewlog()
   const u = status.update
   $('updateBar').hidden = !u
   if (u) {
@@ -197,7 +204,75 @@ $('folderBtn').onclick = async () => {
   status = s
   renderStatus()
 }
+$('libDirBtn').onclick = async () => {
+  const s = await api.chooseLibDir()
+  if (s.pickError) alert(s.pickError)
+  else if (s.moved && (s.moved.skipped || s.moved.failed)) {
+    const parts = [`Moved ${s.moved.moved} game${s.moved.moved === 1 ? '' : 's'}.`]
+    if (s.moved.skipped) parts.push(`${s.moved.skipped} left in the old folder (same name already in the new one).`)
+    if (s.moved.failed) parts.push(`${s.moved.failed} couldn't be moved and stayed in the old folder.`)
+    alert(parts.join('\n'))
+  }
+  status = s
+  renderStatus()
+  await refresh()
+}
 $('libBtn').onclick = () => api.reveal(null)
+
+// ─── Crewlog connector ────────────────────────────────────────────────────
+// The code never comes back from main: the field only ever holds what you type.
+
+let crwNote = null // { ok, text } from the last Save / Check
+function renderCrewlog() {
+  const c = status?.crewlog
+  if (!c) return
+  if (document.activeElement !== $('crwBase')) $('crwBase').value = c.base ?? ''
+  $('crwCode').placeholder = c.hasCode ? 'Saved · paste a new code to replace it' : 'crw_…'
+  $('crwCheck').disabled = !c.hasCode
+  $('crwForget').disabled = !c.hasCode
+  const el = $('crwStatus')
+  let text, cls
+  if (c.hasCode && c.blocked === 'unauthorized') [text, cls] = [`Not connected: ${c.error} Paste a new code.`, 'bad']
+  else if (c.hasCode && c.blocked === 'suspended') [text, cls] = [`Stopped: ${c.error}`, 'bad']
+  else if (crwNote && !crwNote.ok) [text, cls] = [crwNote.text, 'bad']
+  else if (!c.hasCode) [text, cls] = ['Not connected.', '']
+  else if (c.connected) [text, cls] = [`Connected as @${c.handle}`, 'good']
+  else [text, cls] = ['Code saved. Press Check to test it.', '']
+  if (c.pending) text += ` · ${c.pending} game${c.pending === 1 ? '' : 's'} waiting to send`
+  if (c.pending && c.retryError) text += ` (${c.retryError})`
+  el.textContent = text
+  el.className = `hint crwStatus ${cls}`
+  const last = c.last
+  const box = $('crwLast')
+  box.replaceChildren()
+  if (last) {
+    box.className = `hint ${last.ok ? '' : 'bad'}`
+    box.append(last.text)
+    if (last.url) {
+      const a = document.createElement('a')
+      a.href = '#'
+      a.textContent = 'View'
+      a.onclick = (e) => {
+        e.preventDefault()
+        void api.crewlogOpen(last.url)
+      }
+      box.append(' · ', a)
+    }
+  }
+}
+async function crewlogDo(p) {
+  const res = await p
+  crwNote = res?.ok ? null : { ok: false, text: res?.error ?? 'Something went wrong.' }
+  status = await api.status()
+  renderStatus()
+}
+$('crwSave').onclick = async () => {
+  const code = $('crwCode').value.trim()
+  await crewlogDo(api.crewlogSet({ base: $('crwBase').value.trim(), ...(code ? { code } : {}) }))
+  if (!crwNote) $('crwCode').value = ''
+}
+$('crwCheck').onclick = () => crewlogDo(api.crewlogCheck())
+$('crwForget').onclick = () => crewlogDo(api.crewlogForget())
 $('settingsBtn').onclick = (e) => {
   e.stopPropagation()
   $('settings').hidden = !$('settings').hidden

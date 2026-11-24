@@ -45,9 +45,27 @@
         <h3>Folders</h3>
         <div class="row">
           <button id="folderBtn">OPTCG Sim folder…</button>
+          <button id="libDirBtn">Recordings folder…</button>
           <button id="libBtn">Open library folder</button>
         </div>
         <div id="folderHint" class="hint"></div>
+        <h3>Crewlog</h3>
+        <label class="field"
+          >Connector code
+          <input id="crwCode" type="password" placeholder="crw_…" autocomplete="off" spellcheck="false" />
+          <span class="hint">In Crewlog: Settings › OPTCG Recorder › Make a code.</span>
+        </label>
+        <label class="field"
+          >Crewlog address
+          <input id="crwBase" type="text" placeholder="https://getcrewlog.com" autocomplete="off" spellcheck="false" />
+        </label>
+        <div class="row">
+          <button id="crwSave">Save</button>
+          <button id="crwCheck">Check</button>
+          <button id="crwForget">Disconnect</button>
+        </div>
+        <div id="crwStatus" class="hint crwStatus"></div>
+        <div id="crwLast" class="hint"></div>
       </div>
     </header>
     <div id="error" hidden></div>
