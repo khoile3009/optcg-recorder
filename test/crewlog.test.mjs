@@ -8,6 +8,7 @@ import {
   createCrewlog,
   normalizeBase,
   resolveLeader,
+  withEventFields,
   retryDelay,
 } from '../src/crewlog.mjs'
 
@@ -313,4 +314,81 @@ test('check() after a 401 with a new code unblocks and flushes', async () => {
   await h.settle()
   await h.settle()
   assert.equal(h.c.state().pending, 0)
+})
+
+// ─── events (docs/crewlog-events-spec.md) ────────────────────────────────────
+const EVF = { kind: 'event', event: { client_id: 'ev_0123456789ab', name: 'Weekly Bash' }, set_id: 's_aaaaaaaaaaaa', game_in_set: 1, match_source: 'private' }
+const me200 = (features) => ({ status: 200, body: { handle: 'khoi', ...(features ? { features } : {}) } })
+
+test('event game: /me first, event fields sent when the server lists events', async () => {
+  const h = harness({ responses: [me200(['events']), ok({ kind: 'event' })] })
+  await h.c.enqueue(meta(), LEADERS, EVF)
+  await h.settle()
+  await h.settle()
+  assert.equal(h.calls[0].url, 'https://getcrewlog.com/api/recorder/me')
+  assert.ok(h.c.supportsEvents())
+  const post = h.calls[1]
+  assert.equal(post.body.kind, 'event')
+  assert.deepEqual(post.body.event, EVF.event)
+  assert.equal(post.body.set_id, EVF.set_id)
+  const logged = h.events.find((e) => e.type === 'logged')
+  assert.equal(logged.kind, 'event')
+  assert.deepEqual(logged.sent, EVF)
+  assert.equal(h.c.state().events, true)
+})
+
+test('event game: a server without events gets the plain body', async () => {
+  const h = harness({ responses: [me200(), ok()] })
+  await h.c.enqueue(meta(), LEADERS, EVF)
+  await h.settle()
+  await h.settle()
+  assert.ok(!h.c.supportsEvents())
+  const post = h.calls[1]
+  assert.equal(post.body.kind, undefined)
+  assert.equal(post.body.event, undefined)
+  const logged = h.events.find((e) => e.type === 'logged')
+  assert.equal(logged.kind, 'sim')
+  assert.equal(logged.sent, null)
+})
+
+test('requeue swaps a queued game\'s fields; false once it has gone', async () => {
+  const h = harness({ responses: [new Error('offline'), new Error('offline')] })
+  await h.c.enqueue(meta(), LEADERS)
+  await h.settle()
+  assert.equal(await h.c.requeue('abc123', EVF), true)
+  assert.equal(await h.c.requeue('nope', EVF), false)
+})
+
+test('retag: unsupported before /me, PATCH when supported, 404 and 401 mapped', async () => {
+  const h = harness({
+    responses: [
+      me200(['events']),
+      ok({ kind: 'event' }),
+      { status: 404, body: { error: 'Unknown game', code: 'unknown_game' } },
+      { status: 401, body: { error: 'Unknown code', code: 'x' } },
+    ],
+  })
+  assert.equal((await h.c.retag('abc123', EVF)).code, 'unsupported')
+  assert.equal(h.calls.length, 0)
+  await h.c.check()
+  const r = await h.c.retag('abc 123', EVF)
+  assert.equal(r.ok, true)
+  assert.equal(r.kind, 'event')
+  const patch = h.calls[1]
+  assert.equal(patch.method, 'PATCH')
+  assert.equal(patch.url, 'https://getcrewlog.com/api/recorder/games/abc%20123')
+  assert.equal(patch.headers.Authorization, `Bearer ${CODE}`)
+  assert.deepEqual(patch.body, EVF)
+  assert.equal((await h.c.retag('abc123', { kind: 'sim' })).code, 'unknown_game')
+  assert.equal((await h.c.retag('abc123', { kind: 'sim' })).code, 'blocked')
+  assert.equal((await h.c.retag('abc123', { kind: 'sim' })).code, 'blocked', 'no request while blocked')
+  assert.equal(h.calls.length, 4)
+})
+
+test('withEventFields: merged only while the body stays small', () => {
+  const body = { game_id: 'g', result: 'W' }
+  assert.deepEqual(withEventFields(body, null), body)
+  assert.deepEqual(withEventFields(body, { kind: 'sim' }), { ...body, kind: 'sim' })
+  const huge = { kind: 'event', event: { client_id: 'ev_1', name: 'x'.repeat(5000) } }
+  assert.deepEqual(withEventFields(body, huge), body)
 })

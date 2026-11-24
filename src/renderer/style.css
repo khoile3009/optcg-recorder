@@ -1726,3 +1726,110 @@ main {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* ---------- event mode ---------- */
+.eventWrap {
+  position: relative;
+}
+.eventPill {
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.eventPill:hover {
+  color: var(--text);
+  border-color: var(--line2);
+}
+.eventPill .evMark {
+  color: var(--muted);
+  font-size: 10px;
+}
+.eventPill.on {
+  color: var(--accent);
+  border-color: rgba(242, 181, 68, 0.45);
+  background: rgba(242, 181, 68, 0.1);
+}
+.eventPill.on .evMark {
+  color: var(--accent);
+}
+#eventText {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.eventPop {
+  left: 0;
+  right: auto;
+  z-index: 30;
+}
+.evFilter {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 6px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.gtags {
+  display: flex;
+  gap: 5px;
+  margin-top: 4px;
+  min-width: 0;
+}
+.srcBadge,
+.evBadge {
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  border: 1px solid var(--line);
+  color: var(--text2);
+}
+.srcBadge.queue {
+  color: var(--track);
+  border-color: rgba(64, 200, 190, 0.35);
+}
+.srcBadge.private {
+  color: #b9a3ff;
+  border-color: rgba(185, 163, 255, 0.35);
+}
+.evBadge {
+  color: var(--accent);
+  border-color: rgba(242, 181, 68, 0.35);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.eventRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.eventRow:empty {
+  display: none;
+}
+.chip.evChip {
+  color: var(--accent);
+  border-color: rgba(242, 181, 68, 0.45);
+  background: rgba(242, 181, 68, 0.1);
+}
+.evTagBtn {
+  font-size: 12px;
+  padding: 3px 10px;
+}
+.eventTagBox {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.eventTagBox input {
+  flex: 1;
+  min-width: 0;
+}

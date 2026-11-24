@@ -187,6 +187,11 @@ export function matchesFilters(rec, f = {}) {
   if (f.order && rec.firstSeat !== (f.order === '1st' ? 1 : 2)) return false
   if (f.starred && !rec.starred) return false
   if (f.misplays && !rec.misplays?.length) return false
+  // kind: 'sim' (no event) or 'event' (any event); event: one event's client_id.
+  if (f.kind === 'sim' && rec.event?.client_id) return false
+  if (f.kind === 'event' && !rec.event?.client_id) return false
+  if (f.event && rec.event?.client_id !== f.event) return false
+  if (f.source && rec.match?.source !== f.source) return false
   if (f.me?.length && !f.me.includes(rec.me?.leaderId)) return false
   if (f.opp?.length && !f.opp.includes(rec.opp?.leaderId)) return false
   const mine = (rec.userTags ?? []).map((t) => t.toLowerCase())
@@ -309,4 +314,48 @@ export function backfillResult(meta, text) {
     tags: [...tagsFor(game), ...extra],
     title: titleFor(game),
   }
+}
+
+/**
+ * How the game was started, from the lines the sim writes before it:
+ *   Attempting to connect to <CODE>                  joined a room
+ *   Setting up a Relay Room... / ...Room ID:<CODE>   hosted a room
+ *   RZ1|META|<gameId>|<matchNo>                      matchNo > 0: a queue match
+ *   Opponent is Ready for Rematch                    a rematch in the same room
+ * A rematch has no connection line and matchNo 0. Hosted vs joined does not
+ * say queue vs private: the queue does both. matchNo does.
+ * → { source: 'queue'|'private'|null, room, hosted, rematch, matchNo }
+ */
+export function parseConnection(text) {
+  let room = null
+  let hosted = false
+  let matchNo = null
+  let rematch = false
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/\r$/, '')
+    if (line.startsWith('RZ1|META|')) {
+      const n = Number(line.split('|')[3])
+      if (Number.isFinite(n)) matchNo = n
+      continue
+    }
+    if (line.startsWith('RZ1|')) {
+      if (matchNo !== null) break // the header is over
+      continue
+    }
+    let m = /Attempting to connect to (\S+)/.exec(line)
+    if (m && !room) {
+      room = m[1]
+      continue
+    }
+    m = /Room ID:\s*(\S+)/.exec(line)
+    if (m && !room) {
+      room = m[1]
+      hosted = true
+      continue
+    }
+    if (/Ready for Rematch/i.test(line)) rematch = true
+  }
+  if (room) rematch = false
+  const source = matchNo === null ? null : matchNo > 0 ? 'queue' : 'private'
+  return { source, room, hosted, rematch, matchNo }
 }

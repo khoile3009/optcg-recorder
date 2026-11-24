@@ -13,6 +13,26 @@
     <header id="bar">
       <div class="brand"><span class="logo">●</span> OPTCG Recorder</div>
       <div id="state" class="pill idle"><span class="dot"></span><span id="stateText">Idle</span></div>
+      <div id="eventWrap" class="eventWrap">
+        <button id="eventBtn" class="pill eventPill" aria-expanded="false"><span class="evMark">◆</span><span id="eventText">Sim session</span></button>
+        <form id="eventPop" class="popover eventPop" hidden>
+          <h3>Event mode</h3>
+          <span class="hint"
+            >For online tournaments. While it's on, every game saved is tagged with the event and filed under it in
+            Crewlog. Games in one room against one opponent are grouped into a set (one round).</span
+          >
+          <label class="field"
+            >Event name
+            <input id="eventName" list="eventSuggest" maxlength="80" placeholder="e.g. Weekly Bash #12" autocomplete="off" />
+          </label>
+          <datalist id="eventSuggest"></datalist>
+          <div class="row">
+            <button type="submit" id="eventStart" class="primary">Start event</button>
+            <button type="button" id="eventStop">End event</button>
+          </div>
+          <div id="eventErr" class="hint bad" hidden></div>
+        </form>
+      </div>
       <div class="grow"></div>
       <button id="upgradeBtn" class="primary" hidden title="Start recording video for the rest of this game">● Record this game</button>
       <button id="recBtn" class="primary">Record now</button>
@@ -101,6 +121,12 @@
           </div>
           <button id="starFilter" class="seg-single" title="Starred only">★</button>
           <button id="misplayFilter" class="seg-single" title="Games with misplays">⚑</button>
+        </div>
+        <div class="filters">
+          <div class="seg" data-key="kind">
+            <button data-v="">All</button><button data-v="sim">Sim</button><button data-v="event">Events</button>
+          </div>
+          <select id="eventFilter" class="evFilter" title="Which event" hidden></select>
         </div>
 
         <div class="section">
@@ -191,6 +217,12 @@
               <button id="star" class="starBtn" title="Star this game">☆</button>
             </div>
             <div id="tags" class="chips"></div>
+            <div id="eventRow" class="eventRow"></div>
+            <form id="eventTagBox" class="tagInput eventTagBox" hidden>
+              <input id="eventTagInput" list="eventSuggest" maxlength="80" placeholder="Event name, then Enter…" autocomplete="off" />
+              <button type="submit" class="primary">Tag</button>
+              <button type="button" id="eventTagCancel">Cancel</button>
+            </form>
             <div id="userTagBox" class="tagInput">
               <input id="userTagInput" list="tagSuggest" placeholder="Add a tag and press Enter…" />
               <datalist id="tagSuggest"></datalist>

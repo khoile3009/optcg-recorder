@@ -6,9 +6,13 @@
  * secret (safeStorage) and hands the code in through getConfig() only when a
  * request is about to go to the configured base URL.
  *
- *   GET  {base}/api/recorder/me     -> { handle }
- *   POST {base}/api/recorder/games  -> { event_id, round, handle, duplicate, new_session, url }
- *   errors                          -> { error, code }
+ *   GET   {base}/api/recorder/me          -> { handle, features? }
+ *   POST  {base}/api/recorder/games       -> { kind?, event_id, round, handle, duplicate, new_session, url }
+ *   PATCH {base}/api/recorder/games/{id}  -> same shape (move a game between sim and an event)
+ *   errors                                -> { error, code }
+ *
+ * Event fields (docs/crewlog-events-spec.md) ride on each outbox entry as `ev`
+ * and are merged into the POST only when /me lists features: ["events"].
  */
 
 export const DEFAULT_BASE = 'https://getcrewlog.com'
@@ -104,11 +108,19 @@ export function classify(status) {
   return 'bug' // 400, 413 and anything else we sent wrong
 }
 
+/** The POST body with the event fields merged in, when they fit. */
+export function withEventFields(body, ev) {
+  if (!ev) return body
+  const full = { ...body, ...ev }
+  return JSON.stringify(full).length < MAX_BODY ? full : body
+}
+
 export const retryDelay = (attempts) => BACKOFF_MS[Math.min(Math.max(attempts, 1), BACKOFF_MS.length) - 1]
 
 /**
  * The connector. Events (onEvent) for the UI:
- *   { type: 'logged', gameId, url, newSession, duplicate, handle }
+ *   { type: 'logged', gameId, recId, url, newSession, duplicate, handle, kind, sent }
+ *     kind: where the server filed it ('sim' | 'event'); sent: the event fields sent, or null
  *   { type: 'dropped', gameId, error, bug }
  *   { type: 'unknownLeader', recId }
  *   { type: 'state' }  (state() changed)
@@ -130,6 +142,8 @@ export function createCrewlog({
   let blocked = null
   let blockedError = null
   let handle = null
+  /** null = not asked yet; else the server's feature list. */
+  let features = null
   let checkError = null
   let timer = null
   let flushing = null
@@ -196,8 +210,33 @@ export function createCrewlog({
     return outbox.length !== before
   }
 
+  const supportsEvents = () => !!features?.includes('events')
+
+  /** GET /me without flushing. Returns { ok, handle } or { ok: false, error, status }. */
+  async function me() {
+    const r = await request('GET', '/api/recorder/me')
+    if (r.status === 200 && typeof r.data?.handle === 'string') {
+      handle = r.data.handle
+      features = Array.isArray(r.data.features) ? r.data.features.filter((f) => typeof f === 'string') : []
+      checkError = null
+      if (blocked) {
+        blocked = null
+        blockedError = null
+      }
+      changed()
+      return { ok: true, handle }
+    }
+    const kind = r.status ? classify(r.status) : 'retry'
+    checkError = r.error
+    if (kind === 'unauthorized' || kind === 'suspended') block(kind, r.error)
+    else changed()
+    return { ok: false, status: r.status, error: r.error }
+  }
+
   async function sendOne(entry) {
-    const r = await request('POST', '/api/recorder/games', entry.body)
+    const sent = supportsEvents() && entry.ev ? entry.ev : null
+    const body = withEventFields(entry.body, sent)
+    const r = await request('POST', '/api/recorder/games', body)
     const kind = r.status ? classify(r.status) : 'retry'
     if (kind === 'ok') {
       outbox = outbox.filter((e) => e.body.game_id !== entry.body.game_id)
@@ -210,6 +249,8 @@ export function createCrewlog({
         newSession: !!r.data?.new_session,
         duplicate: !!r.data?.duplicate,
         handle: r.data?.handle ?? null,
+        kind: r.data?.kind === 'event' ? 'event' : 'sim',
+        sent: body === entry.body ? null : sent,
       })
       return true
     }
@@ -242,6 +283,10 @@ export function createCrewlog({
         let dirty = prune()
         const { code } = getConfig()
         if (!code || blocked) break
+        if (features === null && outbox.some((e) => e.ev?.kind === 'event')) {
+          await me() // learn whether event fields can go along
+          if (blocked) break
+        }
         const due = outbox.filter((e) => (e.nextAt ?? 0) <= now()).sort((a, b) => a.createdAt - b.createdAt)
         for (const entry of due) {
           if (blocked) break
@@ -262,7 +307,7 @@ export function createCrewlog({
 
   return {
     /** Queue a finished recording (its meta). Returns { queued } or { error }. */
-    async enqueue(meta, leaders) {
+    async enqueue(meta, leaders, ev = null) {
       const built = buildGame(meta, leaders)
       if (built.error) {
         if (built.error.includes('unknown leader')) emit({ type: 'unknownLeader', recId: meta?.id ?? null })
@@ -270,7 +315,7 @@ export function createCrewlog({
       }
       const id = built.body.game_id
       if (!outbox.some((e) => e.body.game_id === id))
-        outbox.push({ recId: meta.id ?? null, body: built.body, createdAt: now(), attempts: 0, nextAt: 0 })
+        outbox.push({ recId: meta.id ?? null, body: built.body, ev, createdAt: now(), attempts: 0, nextAt: 0 })
       await persist()
       void flush()
       return { queued: id }
@@ -278,29 +323,44 @@ export function createCrewlog({
     flush,
     /** GET /me. Returns { ok, handle } or { ok: false, error, status }. */
     async check() {
-      const r = await request('GET', '/api/recorder/me')
-      if (r.status === 200 && typeof r.data?.handle === 'string') {
-        handle = r.data.handle
-        checkError = null
-        if (blocked) {
-          blocked = null
-          blockedError = null
-        }
-        changed()
-        void flush()
-        return { ok: true, handle }
-      }
+      const r = await me()
+      if (r.ok) void flush()
+      return r
+    },
+    supportsEvents,
+    /** A game still waiting to send: swap its event fields. Returns whether it was queued. */
+    async requeue(gameId, ev) {
+      const entry = outbox.find((e) => e.body.game_id === gameId)
+      if (!entry) return false
+      entry.ev = ev
+      await persist()
+      return true
+    },
+    /**
+     * PATCH a logged game's event fields. Returns
+     *   { ok: true, kind }  |  { ok: false, code: 'unknown_game' | 'rejected' | 'retry' | 'blocked' | 'unsupported', error }
+     */
+    async retag(gameId, ev) {
+      if (blocked) return { ok: false, code: 'blocked', error: blockedError }
+      if (!supportsEvents()) return { ok: false, code: 'unsupported', error: "Crewlog doesn't take events yet" }
+      const r = await request('PATCH', `/api/recorder/games/${encodeURIComponent(gameId)}`, ev)
       const kind = r.status ? classify(r.status) : 'retry'
-      checkError = r.error
-      if (kind === 'unauthorized' || kind === 'suspended') block(kind, r.error)
-      else changed()
-      return { ok: false, status: r.status, error: r.error }
+      if (kind === 'ok') return { ok: true, kind: r.data?.kind === 'event' ? 'event' : 'sim', url: typeof r.data?.url === 'string' ? r.data.url : null }
+      if (r.status === 404) return { ok: false, code: 'unknown_game', error: r.error }
+      if (kind === 'unauthorized' || kind === 'suspended') {
+        block(kind, r.error)
+        return { ok: false, code: 'blocked', error: r.error }
+      }
+      if (kind === 'retry') return { ok: false, code: 'retry', error: r.error }
+      if (kind === 'bug') log(`crewlog: retag ${gameId} failed: HTTP ${r.status} ${r.error}`)
+      return { ok: false, code: 'rejected', error: r.error }
     },
     /** The code or base URL changed: forget what we knew and try again. */
     reset() {
       blocked = null
       blockedError = null
       handle = null
+      features = null
       checkError = null
       changed()
       void flush()
@@ -309,6 +369,7 @@ export function createCrewlog({
       return {
         handle,
         connected: !!handle && !blocked,
+        events: supportsEvents(),
         blocked,
         error: blocked ? blockedError : checkError,
         pending: outbox.length,

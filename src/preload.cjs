@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('recorder', {
   stop: () => ipcRenderer.invoke('rec:manualStop'),
   listSources: () => ipcRenderer.invoke('app:listSources'),
   setSettings: (patch) => ipcRenderer.invoke('app:setSettings', patch),
+  setEvent: (ev) => ipcRenderer.invoke('app:setEvent', ev),
+  tagEvent: (id, ev, opts) => ipcRenderer.invoke('lib:setEvent', id, ev, opts),
   chooseSourceDir: () => ipcRenderer.invoke('app:chooseSourceDir'),
   useSourceDir: (dir) => ipcRenderer.invoke('app:useSourceDir', dir),
   chooseLibDir: () => ipcRenderer.invoke('app:chooseLibDir'),

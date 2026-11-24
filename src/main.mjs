@@ -13,17 +13,19 @@
  * Library layout (userData/recordings):  <id>.webm  <id>.json  <id>.log
  */
 import { app, BrowserWindow, Notification, desktopCapturer, dialog, ipcMain, net, protocol, safeStorage, session, shell } from 'electron'
+import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { backfillResult, logEvents, parseLog, parseLogFileName, quitMidGame, tagsFor, titleFor, turnsStarted } from './logtags.mjs'
+import { backfillResult, logEvents, parseConnection, parseLog, parseLogFileName, quitMidGame, tagsFor, titleFor, turnsStarted } from './logtags.mjs'
 import { ASSETS, mergeLeaders, parseLeaders } from './leaderdb.mjs'
 import { LEADERS as BUNDLED_LEADERS } from './data/leaders.mjs'
 import { installUpdate, startUpdateChecks } from './updater.mjs'
 import { libDirProblem, moveRecordings, recordingIds, writableProblem } from './libmove.mjs'
-import { CODE_RE, DEFAULT_BASE, createCrewlog, normalizeBase } from './crewlog.mjs'
+import { CODE_RE, DEFAULT_BASE, createCrewlog, localDate, normalizeBase } from './crewlog.mjs'
+import { cleanEvent, cleanEventName, eventFields, filedAs, knownEvents, needsRetag, newClientId, retagged, setFor, validClientId, wantedFiling } from './events.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const POLL_MS = 2000
@@ -90,6 +92,8 @@ const GAME_START_MODES = ['record', 'track', 'off']
 // What a new game does: record video, track it from the log only, or nothing. Older settings had autoRecord.
 if (!GAME_START_MODES.includes(settings.onGameStart)) settings.onGameStart = settings.autoRecord === false ? 'off' : 'record'
 if (typeof settings.libDir === 'string' && settings.libDir) libDir = settings.libDir
+// Event mode: { client_id, name } while on, else null. Games saved meanwhile are tagged with it.
+settings.event = cleanEvent(settings.event)
 
 // ─── Sim folder ───────────────────────────────────────────────────────────
 
@@ -459,11 +463,19 @@ async function finalize(cur) {
     meta.tracked = true
     meta.tags = [...meta.tags, 'tracked']
   } else if (size === 0) meta.tags = [...meta.tags, 'no video']
+  if (game && text) {
+    // Queue or private room, the set (round) it belongs to, and the event if Event mode is on.
+    meta.match = parseConnection(text)
+    const prev = listRecordings().find((m) => m.id !== cur.id && m.status === 'done') ?? null
+    meta.set = setFor({ match: meta.match, opp: game.opp, startedAt: meta.startedAt }, prev, localDate(Date.parse(meta.startedAt) || cur.startMs))
+  }
+  if (settings.event && !meta.event) meta.event = { ...settings.event }
+  meta.tags = retagged(meta)
   await writeJson(metaPath(cur.id), meta)
   sendLibrary()
   if (Notification.isSupported())
     new Notification({ title: 'Game saved', body: `${meta.title}  (${Math.round(durationMs / 60000)} min)` }).show()
-  if (finished && game && crewlogHasCode()) void crewlog.enqueue(meta, leaders)
+  if (finished && game && crewlogHasCode()) void crewlog.enqueue(meta, leaders, eventFields(meta))
 }
 
 /**
@@ -657,6 +669,8 @@ function status() {
     lastError,
     update,
     crewlog: crewlogStatus(),
+    event: settings.event,
+    events: knownEvents(listRecordings(), settings.event),
   }
 }
 
@@ -703,12 +717,14 @@ const crewlog = createCrewlog({
       const text = `Logged to Crewlog${ev.newSession ? " · Started today's sim session" : ''}`
       crewlogLast = { ok: true, text, url: ev.url, at: Date.now() }
       notify('Logged to Crewlog', ev.newSession ? "Started today's sim session" : ev.handle ? `as @${ev.handle}` : 'Game added', ev.url ? () => openCrewlogUrl(ev.url) : null)
+      void noteLogged(ev)
     } else if (ev.type === 'dropped') {
       crewlogLast = { ok: false, text: `Crewlog didn't take a game: ${ev.error}`, at: Date.now() }
     } else if (ev.type === 'unknownLeader') {
       crewlogLast = { ok: false, text: "Can't log, unknown leader", at: Date.now() }
       notify('Not logged to Crewlog', "Can't log, unknown leader")
     } else if (ev.type === 'state') {
+      if (crewlog.supportsEvents()) void reconcile()
       const { blocked, error } = crewlog.state()
       if (blocked && blocked !== crewlogWasBlocked)
         notify('Crewlog stopped logging', blocked === 'unauthorized' ? `${error} Make a new code in Crewlog and paste it in Settings.` : error)
@@ -717,6 +733,45 @@ const crewlog = createCrewlog({
     sendStatus()
   },
 })
+
+/** Remember where Crewlog filed a game, so a later tag change can move it there with PATCH. */
+async function noteLogged(ev) {
+  if (!idOk(ev.recId) || !ev.gameId) return
+  const m = readJson(metaPath(ev.recId), null)
+  if (!m) return
+  try {
+    await updateMeta(ev.recId, { crewlog: { gameId: ev.gameId, filed: filedAs(ev.kind, ev.sent) } })
+  } catch {}
+  void reconcile()
+}
+
+/**
+ * Move logged games whose event tag changed (or that were logged before the
+ * server knew events) to where they belong now. One pass at a time; stops at
+ * the first error worth retrying and picks up on the next trigger.
+ */
+let reconciling = false
+async function reconcile() {
+  if (reconciling || !crewlogHasCode() || !crewlog.supportsEvents()) return
+  reconciling = true
+  try {
+    for (const m of needsRetag(listRecordings())) {
+      const fields = eventFields(m)
+      const r = await crewlog.retag(m.crewlog.gameId, fields)
+      if (r.ok) await updateMeta(m.id, { crewlog: { gameId: m.crewlog.gameId, filed: filedAs(r.kind, fields) } })
+      else if (r.code === 'unknown_game') await updateMeta(m.id, { crewlog: { ...m.crewlog, filed: null } })
+      else if (r.code === 'rejected') {
+        await updateMeta(m.id, { crewlog: { ...m.crewlog, failedFor: wantedFiling(m), error: r.error } })
+        crewlogLast = { ok: false, text: `Crewlog didn't move a game: ${r.error}`, at: Date.now() }
+      } else break
+    }
+  } catch (e) {
+    console.error('crewlog reconcile', e)
+  } finally {
+    reconciling = false
+    sendStatus()
+  }
+}
 
 function crewlogStatus() {
   const s = crewlog.state()
@@ -746,6 +801,19 @@ ipcMain.handle('crewlog:forget', async () => {
   await fsp.rm(crewlogKeyPath, { force: true })
   crewlog.reset()
   return { ok: true }
+})
+/** Event mode: { name, client_id? } turns it on (client_id picks a known event), null turns it off. */
+ipcMain.handle('app:setEvent', async (_e, ev) => {
+  if (ev == null) settings.event = null
+  else {
+    const name = cleanEventName(ev.name)
+    if (!name) return { ok: false, error: 'Give the event a name.' }
+    const client_id = validClientId(ev.client_id) ? ev.client_id : newClientId(randomBytes(6).toString('hex'))
+    settings.event = { client_id, name }
+  }
+  await saveSettings()
+  sendStatus()
+  return { ok: true, event: settings.event }
 })
 ipcMain.handle('crewlog:open', (_e, url) => openCrewlogUrl(String(url ?? '')))
 
@@ -782,6 +850,31 @@ ipcMain.handle('lib:update', (_e, id, patch) =>
     ...(Array.isArray(patch.misplays) ? { misplays: cleanMisplays(patch.misplays) } : {}),
   }),
 )
+/**
+ * Tag a saved game with an event (or untag it with null). With wholeSet the
+ * other games of its set get the same tag. Logged games move with PATCH.
+ */
+ipcMain.handle('lib:setEvent', async (_e, id, ev, opts = {}) => {
+  if (!idOk(id)) throw new Error('Bad id')
+  // A new name gets a fresh id; a known one arrives with its id from the renderer.
+  const event =
+    ev == null
+      ? null
+      : cleanEvent({ ...ev, client_id: validClientId(ev?.client_id) ? ev.client_id : newClientId(randomBytes(6).toString('hex')) })
+  if (ev != null && !event) return { ok: false, error: 'Give the event a name.' }
+  const all = listRecordings()
+  const target = all.find((m) => m.id === id)
+  if (!target) throw new Error('No such recording')
+  const setId = opts.wholeSet !== false && target.set?.id
+  const games = setId ? all.filter((m) => m.set?.id === setId) : [target]
+  for (const m of games) {
+    const next = { ...m, event }
+    await updateMeta(m.id, { event, tags: retagged(next) })
+    await crewlog.requeue(String(m.gameId || m.id).slice(0, 100), eventFields(next))
+  }
+  void reconcile()
+  return { ok: true, count: games.length }
+})
 ipcMain.handle('lib:delete', async (_e, id) => {
   if (!idOk(id) || rec?.id === id) throw new Error('Cannot delete this recording')
   for (const ext of ['webm', 'json', 'log']) await fsp.rm(path.join(libDir, `${id}.${ext}`), { force: true })
@@ -964,7 +1057,9 @@ else {
     // Recordings interrupted by a crash or a closed app: mark them, keep the video.
     for (const m of listRecordings()) if (m.status === 'recording') await updateMeta(m.id, { status: 'done', tags: [...(m.tags ?? []), 'interrupted'] })
     await backfillResults()
-    void crewlog.flush() // games that didn't make it last time
+    // Games that didn't make it last time; tag changes need /me first to know the server takes events.
+    if (crewlogHasCode() && needsRetag(listRecordings()).length) void crewlog.check()
+    else void crewlog.flush()
 
     // getDisplayMedia in the recorder window gets the source we pick here; no picker UI.
     // 'loopback' is the whole system mix (Windows can't capture one window's audio).

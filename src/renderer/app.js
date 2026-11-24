@@ -28,7 +28,7 @@ const COLOR_HEX = { Red: '#e5484d', Green: '#30a46c', Blue: '#3e8ed0', Purple: '
 let recs = []
 let status = null
 let selId = null
-const filters = { result: '', order: '', starred: false, misplays: false, me: [], opp: [], userTags: [], text: '' }
+const filters = { result: '', order: '', kind: '', event: '', starred: false, misplays: false, me: [], opp: [], userTags: [], text: '' }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -40,6 +40,12 @@ const fmtDur = (ms) => {
   return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`
 }
 const fmtSize = (b) => (b > 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.round((b ?? 0) / 1e6)} MB`)
+const SOURCE_LABEL = { queue: 'Queue', private: 'Private' }
+/** "vs Scarria · G2" (the opponent's name stays on this machine). */
+const setLabel = (r) => (r.set ? `vs ${shortName(r.opp?.name) || '?'} · G${r.set.game}` : '')
+const normName = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
+/** Known event with this name (so retyping a name reuses its id), or undefined. */
+const eventByName = (name) => (status?.events ?? []).find((e) => normName(e.name) === normName(name))
 const leaderName = (side) => LEADER.get(side?.leaderId)?.name ?? side?.leaderName ?? side?.leaderId ?? '?'
 
 /** A leader portrait (art crop of the card), with a colour ring. */
@@ -131,6 +137,7 @@ function renderStatus() {
   $('error').hidden = !(status.lastError || crwProblem)
   $('error').textContent = status.lastError ?? crwProblem ?? ''
   renderCrewlog()
+  renderEventMode()
   const u = status.update
   $('updateBar').hidden = !u
   if (u) {
@@ -316,6 +323,60 @@ document.addEventListener('click', (e) => {
   if (!$('settings').hidden && !$('settings').contains(e.target)) $('settings').hidden = true
 })
 
+// ─── Event mode ───────────────────────────────────────────────────────────
+
+let eventKeys = ''
+function renderEventMode() {
+  const ev = status.event
+  $('eventBtn').classList.toggle('on', !!ev)
+  $('eventText').textContent = ev ? `Event: ${ev.name}` : 'Sim session'
+  $('eventBtn').title = ev
+    ? 'Event mode is on: games you play now are tagged with this event. Click to switch or end it.'
+    : 'Games go to your sim session. Click to start Event mode for an online tournament.'
+  $('eventStop').hidden = !ev
+  $('eventStart').textContent = ev ? 'Switch event' : 'Start event'
+  const names = (status.events ?? []).map((e) => e.name)
+  if (names.join('\n') !== eventKeys) {
+    eventKeys = names.join('\n')
+    $('eventSuggest').replaceChildren(...names.map((n) => new Option(n)))
+  }
+}
+const showEventErr = (msg) => {
+  $('eventErr').hidden = !msg
+  $('eventErr').textContent = msg ?? ''
+}
+$('eventBtn').onclick = (e) => {
+  e.stopPropagation()
+  const open = $('eventPop').hidden
+  $('eventPop').hidden = !open
+  $('eventBtn').setAttribute('aria-expanded', String(open))
+  if (open) {
+    showEventErr('')
+    $('eventName').value = status?.event?.name ?? ''
+    $('eventName').focus()
+    $('eventName').select()
+  }
+}
+$('eventPop').onsubmit = async (e) => {
+  e.preventDefault()
+  const name = $('eventName').value
+  const known = eventByName(name)
+  const client_id = known?.client_id
+  const res = await api.setEvent({ name, client_id })
+  if (!res?.ok) return showEventErr(res?.error ?? 'Could not start the event.')
+  $('eventPop').hidden = true
+}
+$('eventStop').onclick = async () => {
+  await api.setEvent(null)
+  $('eventPop').hidden = true
+}
+document.addEventListener('click', (e) => {
+  if (!$('eventPop').hidden && !$('eventWrap').contains(e.target)) $('eventPop').hidden = true
+})
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('eventPop').hidden) $('eventPop').hidden = true
+})
+
 // ─── Sidebar: filters ─────────────────────────────────────────────────────
 
 const toggleIn = (arr, v) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v])
@@ -323,6 +384,8 @@ const anyFilter = () =>
   !!(
     filters.result ||
     filters.order ||
+    filters.kind ||
+    filters.event ||
     filters.starred ||
     filters.misplays ||
     filters.me.length ||
@@ -335,8 +398,13 @@ for (const seg of document.querySelectorAll('.seg[data-key]'))
   for (const b of seg.querySelectorAll('button'))
     b.onclick = () => {
       filters[seg.dataset.key] = b.dataset.v
+      if (seg.dataset.key === 'kind' && b.dataset.v !== 'event') filters.event = ''
       renderAll()
     }
+$('eventFilter').onchange = (e) => {
+  filters.event = e.target.value
+  renderAll()
+}
 $('starFilter').onclick = () => {
   filters.starred = !filters.starred
   renderAll()
@@ -353,6 +421,8 @@ $('clearFilters').onclick = () => {
   Object.assign(filters, {
     result: '',
     order: '',
+    kind: '',
+    event: '',
     starred: false,
     misplays: false,
     me: [],
@@ -371,6 +441,7 @@ function renderFilters() {
   $('misplayFilter').classList.toggle('on', filters.misplays)
   renderStrip('me')
   renderStrip('opp')
+  renderEventFilter()
 
   const counts = new Map()
   for (const r of recs) for (const t of r.userTags ?? []) counts.set(t, (counts.get(t) ?? 0) + 1)
@@ -390,6 +461,26 @@ function renderFilters() {
   )
   $('tagSuggest').replaceChildren(...[...counts.keys()].map((t) => new Option(t)))
   $('clearFilters').hidden = !anyFilter()
+}
+
+/** The specific-event picker, shown with the Events filter. */
+function renderEventFilter() {
+  const byId = new Map()
+  const names = new Map()
+  for (const r of recs) {
+    const id = r.event?.client_id
+    if (!id) continue
+    byId.set(id, (byId.get(id) ?? 0) + 1)
+    if (!names.has(id)) names.set(id, r.event.name)
+  }
+  for (const e of status?.events ?? []) names.set(e.client_id, e.name)
+  const sel = $('eventFilter')
+  sel.hidden = filters.kind !== 'event' || byId.size === 0
+  const total = [...byId.values()].reduce((a, b) => a + b, 0)
+  const want = [['', `All events (${total})`], ...[...byId].map(([id, n]) => [id, `${names.get(id) ?? id} (${n})`])]
+  const have = [...sel.options].map((o) => [o.value, o.text])
+  if (JSON.stringify(have) !== JSON.stringify(want)) sel.replaceChildren(...want.map(([v, t]) => new Option(t, v)))
+  sel.value = filters.event
 }
 
 /** Leaders seen in the library on one side, most played first, plus any selected ones. */
@@ -616,6 +707,16 @@ function row(r) {
   ]
   if (r.opp?.name) bits.push(shortName(r.opp.name))
   body.append(top, el('div', 'gsub', bits.filter(Boolean).join(' · ')))
+  if (r.match?.source || r.event?.name) {
+    const line = el('div', 'gtags')
+    if (r.match?.source) line.append(el('span', `srcBadge ${r.match.source}`, SOURCE_LABEL[r.match.source] ?? r.match.source))
+    if (r.event?.name) {
+      const ev = el('span', 'evBadge', `◆ ${r.event.name}${r.set ? ` · G${r.set.game}` : ''}`)
+      ev.title = [r.event.name, setLabel(r)].filter(Boolean).join(' · ')
+      line.append(ev)
+    }
+    body.append(line)
+  }
   const res = el('div', 'gres')
   if (r.status === 'recording') res.append(el('span', `res live${r.tracked ? ' trk' : ''}`, r.tracked ? 'TRK' : 'REC'))
   else if (r.winnerSeat) res.append(el('span', `res ${r.winnerSeat === 1 ? 'w' : 'l'}`, r.winnerSeat === 1 ? 'W' : 'L'))
@@ -698,10 +799,13 @@ function renderDetail(r, fresh) {
   if (r.durationMs) facts.push(fmtDur(r.durationMs))
   if (r.size) facts.push(fmtSize(r.size))
   if (r.endReason) facts.push(r.endReason.replace(/_/g, ' '))
+  if (r.match?.source) facts.push(r.match.source === 'queue' ? 'Queue match' : 'Private room')
+  if (r.set) facts.push(setLabel(r))
   $('facts').replaceChildren(...facts.map((f) => el('span', null, f)))
 
   // Leader/opponent tags are already shown by the banner.
-  const auto = (r.tags ?? []).filter((t) => !/^(leader|opp|vs):/.test(t))
+  // So are the match source and the event (badge and event row).
+  const auto = (r.tags ?? []).filter((t) => !/^(leader|opp|vs|event):/.test(t) && t !== 'queue' && t !== 'private')
   $('tags').replaceChildren(
     ...auto.map((t) => el('span', `chip auto ${t === 'win' ? 'w' : t === 'loss' ? 'l' : ''}`, t)),
     ...(r.userTags ?? []).map((t) => {
@@ -713,6 +817,7 @@ function renderDetail(r, fresh) {
       return c
     }),
   )
+  renderEventRow(r, fresh)
   if (fresh || document.activeElement !== $('notes')) $('notes').value = r.notes ?? ''
   if (fresh) $('userTagInput').value = ''
   $('del').disabled = r.status === 'recording'
@@ -744,6 +849,53 @@ function renderDetail(r, fresh) {
     video.src = r.videoUrl // finished saving while selected
   }
 }
+
+// ─── Event tag on a game ──────────────────────────────────────────────────
+
+const setSize = (r) => (r.set?.id ? recs.filter((x) => x.set?.id === r.set.id).length : 1)
+
+function renderEventRow(r, fresh) {
+  const row = $('eventRow')
+  if (fresh) $('eventTagBox').hidden = true
+  const n = setSize(r)
+  const scope = n > 1 ? ` (all ${n} games of this set)` : ''
+  if (r.status === 'recording') {
+    row.replaceChildren()
+    $('eventTagBox').hidden = true
+  } else if (r.event?.name) {
+    const chip = el('span', 'chip evChip', `◆ ${r.event.name}`)
+    const x = el('button', 'x', '×')
+    x.title = `Move back to the sim session${scope}`
+    x.onclick = () => void tagEvent(r, null)
+    chip.append(x)
+    const items = [chip]
+    if (n > 1) items.push(el('span', 'hint', `Set of ${n} games`))
+    row.replaceChildren(...items)
+  } else {
+    const b = el('button', 'mini evTagBtn', '◆ Tag event')
+    b.title = `File this game under an event${scope}`
+    b.onclick = () => {
+      $('eventTagBox').hidden = false
+      $('eventTagInput').value = status?.event?.name ?? status?.events?.[0]?.name ?? ''
+      $('eventTagInput').focus()
+      $('eventTagInput').select()
+    }
+    row.replaceChildren(b, el('span', 'hint', n > 1 ? `Sim session · tags all ${n} games of this set` : 'Sim session'))
+  }
+}
+
+async function tagEvent(r, name) {
+  const ev = name == null ? null : { name, client_id: eventByName(name)?.client_id }
+  const res = await api.tagEvent(r.id, ev, { wholeSet: true })
+  if (!res?.ok) return alert(res?.error ?? 'Could not tag the game.')
+  $('eventTagBox').hidden = true
+}
+$('eventTagBox').onsubmit = (e) => {
+  e.preventDefault()
+  const r = recs.find((x) => x.id === selId)
+  if (r) void tagEvent(r, $('eventTagInput').value)
+}
+$('eventTagCancel').onclick = () => ($('eventTagBox').hidden = true)
 
 // MediaRecorder webm has no duration header: seek to the end once so the
 // scrubber knows the length, then jump back.

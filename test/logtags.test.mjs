@@ -256,3 +256,39 @@ test('backfillResult fills in a saved game the log now decides, keeping other ta
   assert.equal(backfillResult({ ...meta, winnerSeat: 2 }, text), null)
   assert.equal(backfillResult(meta, text.replace(/\r\nRZ1\|SEM\|2\|.*$/, '')), null)
 })
+
+import { parseConnection } from '../src/logtags.mjs'
+
+test('parseConnection: queue vs private room, hosting, rematches', () => {
+  const log = (...lines) => ['RZ1|VER|1', ...lines, 'RZ1|TURN|1'].join('\r\n')
+  assert.deepEqual(parseConnection(log('RZ1|META|x|4127', 'Attempting to connect to QROOM9')), {
+    source: 'queue',
+    room: 'QROOM9',
+    hosted: false,
+    rematch: false,
+    matchNo: 4127,
+  })
+  const hosted = parseConnection(log('RZ1|META|x|0', 'Room ID: ABCD12'))
+  assert.equal(hosted.source, 'private')
+  assert.equal(hosted.room, 'ABCD12')
+  assert.ok(hosted.hosted)
+  const re = parseConnection(log('RZ1|META|x|0', 'Ready for Rematch'))
+  assert.equal(re.room, null)
+  assert.ok(re.rematch)
+  assert.equal(parseConnection('no header here').source, null)
+  const late = parseConnection(log('RZ1|META|x|0') + '\r\nAttempting to connect to LATER')
+  assert.equal(late.room, null, 'lines after the header are ignored')
+})
+
+test('matchesFilters: kind, event and match source', () => {
+  const sim = { tags: [], match: { source: 'queue' } }
+  const ev = { tags: [], match: { source: 'private' }, event: { client_id: 'ev_a', name: 'Cup' } }
+  assert.ok(matchesFilters(sim, { kind: 'sim' }))
+  assert.ok(!matchesFilters(ev, { kind: 'sim' }))
+  assert.ok(matchesFilters(ev, { kind: 'event' }))
+  assert.ok(!matchesFilters(sim, { kind: 'event' }))
+  assert.ok(matchesFilters(ev, { kind: 'event', event: 'ev_a' }))
+  assert.ok(!matchesFilters(ev, { event: 'ev_b' }))
+  assert.ok(matchesFilters(sim, { source: 'queue' }))
+  assert.ok(!matchesFilters(ev, { source: 'queue' }))
+})
