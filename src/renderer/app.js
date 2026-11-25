@@ -272,6 +272,7 @@ function renderCrewlog() {
   let text, cls
   if (c.hasCode && c.blocked === 'unauthorized') [text, cls] = [`Not connected: ${c.error} Paste a new code.`, 'bad']
   else if (c.hasCode && c.blocked === 'suspended') [text, cls] = [`Stopped: ${c.error}`, 'bad']
+  else if (c.hasCode && c.blocked === 'moved') [text, cls] = [`Not connected: ${c.error}`, 'bad']
   else if (crwNote && !crwNote.ok) [text, cls] = [crwNote.text, 'bad']
   else if (!c.hasCode) [text, cls] = ['Not connected.', '']
   else if (c.connected) [text, cls] = [`Connected as @${c.handle}`, 'good']

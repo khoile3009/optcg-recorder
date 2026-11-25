@@ -44,9 +44,12 @@ function harness({ responses = [], code = CODE, base = 'https://getcrewlog.com',
     calls.push({ url, ...init, body: init.body ? JSON.parse(init.body) : undefined })
     const r = responses.shift() ?? { status: 500, body: { error: 'no more fake responses' } }
     if (r instanceof Error) throw r
+    const headers = new Map(Object.entries(r.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]))
     return {
       status: r.status,
+      type: r.type ?? 'basic',
       ok: r.status >= 200 && r.status < 300,
+      headers: { get: (k) => headers.get(k.toLowerCase()) ?? null },
       json: async () => {
         if (r.body === undefined) throw new Error('no json')
         return r.body
@@ -82,7 +85,7 @@ const ok = (over = {}) => ({
 // ─── pure helpers ────────────────────────────────────────────────────────────
 
 test('normalizeBase: https anywhere, http only on this machine, no paths', () => {
-  assert.equal(normalizeBase(''), 'https://getcrewlog.com')
+  assert.equal(normalizeBase(''), 'https://www.getcrewlog.com')
   assert.equal(normalizeBase('  https://getcrewlog.com/ '), 'https://getcrewlog.com')
   assert.equal(normalizeBase('http://localhost:3000'), 'http://localhost:3000')
   assert.equal(normalizeBase('http://127.0.0.1:3000'), 'http://127.0.0.1:3000')
@@ -132,6 +135,7 @@ test('buildGame: refuses what it cannot log', () => {
 
 test('classify + retryDelay', () => {
   assert.equal(classify(200), 'ok')
+  assert.equal(classify(308), 'moved')
   assert.equal(classify(401), 'unauthorized')
   assert.equal(classify(403), 'suspended')
   assert.equal(classify(422), 'rejected')
@@ -152,7 +156,7 @@ test('logs a game: Bearer to the configured base only, event with link', async (
   assert.equal(call.url, 'https://getcrewlog.com/api/recorder/games')
   assert.equal(call.method, 'POST')
   assert.equal(call.headers.Authorization, `Bearer ${CODE}`)
-  assert.equal(call.redirect, 'error')
+  assert.equal(call.redirect, 'manual')
   assert.equal(call.body.game_id, 'abc123')
   const logged = h.events.find((e) => e.type === 'logged')
   assert.equal(logged.url, 'https://getcrewlog.com/e/1')
@@ -314,6 +318,46 @@ test('check() after a 401 with a new code unblocks and flushes', async () => {
   await h.settle()
   await h.settle()
   assert.equal(h.c.state().pending, 0)
+})
+
+test('a redirect is never followed: it blocks with the new address and keeps the game', async () => {
+  const h = harness({
+    responses: [
+      { status: 308, headers: { Location: 'https://www.getcrewlog.com/api/recorder/games' } },
+      { status: 200, body: { handle: 'khoi' } },
+      ok(),
+    ],
+  })
+  await h.c.enqueue(meta(), LEADERS)
+  await h.settle()
+  assert.equal(h.calls.length, 1, 'nothing sent to the redirect target')
+  assert.equal(h.c.state().blocked, 'moved')
+  assert.equal(h.c.state().error, 'Crewlog moved to https://www.getcrewlog.com. Update the Crewlog address in Settings.')
+  assert.equal(h.c.state().pending, 1, 'the game waits for the new address')
+  assert.equal(h.events.some((e) => e.type === 'dropped'), false)
+
+  h.cfg.base = 'https://www.getcrewlog.com'
+  assert.equal((await h.c.check()).ok, true)
+  await h.settle()
+  await h.settle()
+  assert.equal(h.calls[1].url, 'https://www.getcrewlog.com/api/recorder/me')
+  assert.equal(h.calls[2].url, 'https://www.getcrewlog.com/api/recorder/games')
+  assert.equal(h.c.state().pending, 0)
+})
+
+test('check(): an opaque redirect (no Location) still reads as moved, not a network error', async () => {
+  const h = harness({ responses: [{ status: 0, type: 'opaqueredirect' }] })
+  const r = await h.c.check()
+  assert.equal(r.ok, false)
+  assert.equal(r.error, 'Crewlog answered with a redirect. Update the Crewlog address in Settings.')
+  assert.equal(h.c.state().blocked, 'moved')
+})
+
+test('check(): a fetch that throws on a redirect reads as moved, not a network error', async () => {
+  const h = harness({ responses: [new Error('Redirect was cancelled')] })
+  const r = await h.c.check()
+  assert.equal(r.error, 'Crewlog answered with a redirect. Update the Crewlog address in Settings.')
+  assert.equal(h.c.state().blocked, 'moved')
 })
 
 // ─── event picker ───────────────────────────────────────────────────────────

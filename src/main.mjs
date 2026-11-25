@@ -24,7 +24,7 @@ import { ASSETS, mergeLeaders, parseLeaders } from './leaderdb.mjs'
 import { LEADERS as BUNDLED_LEADERS } from './data/leaders.mjs'
 import { installUpdate, startUpdateChecks } from './updater.mjs'
 import { libDirProblem, moveRecordings, recordingIds, writableProblem } from './libmove.mjs'
-import { CODE_RE, DEFAULT_BASE, buildGame, createCrewlog, eventBody, localDate, normalizeBase } from './crewlog.mjs'
+import { CODE_RE, DEFAULT_BASE, LEGACY_BASE, buildGame, createCrewlog, eventBody, localDate, normalizeBase } from './crewlog.mjs'
 import { cleanEvent, cleanEventName, knownEvents, newClientId, retagged, setFields, setFor, validClientId } from './events.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -685,7 +685,10 @@ function status() {
 
 const crewlogKeyPath = path.join(userData, 'crewlog.key')
 const crewlogOutboxPath = path.join(userData, 'crewlog-outbox.json')
-const crewlogBase = () => normalizeBase(settings.crewlogBase) ?? DEFAULT_BASE
+const crewlogBase = () => {
+  const base = normalizeBase(settings.crewlogBase)
+  return !base || base === LEGACY_BASE ? DEFAULT_BASE : base
+}
 const crewlogHasCode = () => fs.existsSync(crewlogKeyPath)
 function crewlogCode() {
   try {
@@ -732,8 +735,51 @@ const roundText = (ev) => {
   return parts.join(' · ')
 }
 
+/** Where a redirecting URL points. Asked without the code, and never followed. */
+function redirectTarget(url) {
+  return new Promise((resolve) => {
+    let req
+    const done = (to) => {
+      clearTimeout(timer)
+      resolve(to)
+      try {
+        req.abort()
+      } catch {}
+    }
+    const timer = setTimeout(() => done(null), 5000)
+    try {
+      req = net.request({ url, redirect: 'manual', useSessionCookies: false })
+      req.on('redirect', (_status, _method, to) => done(to))
+      req.on('response', () => done(null))
+      req.on('error', () => done(null))
+      req.end()
+    } catch {
+      done(null)
+    }
+  })
+}
+
+/** net.fetch throws on a redirect it won't follow; hand the connector a 3xx with its Location instead. */
+async function crewlogFetch(url, opts) {
+  try {
+    return await net.fetch(url, opts)
+  } catch (e) {
+    if (!/redirect/i.test(e?.message ?? '')) throw e
+    const location = await redirectTarget(url)
+    return {
+      status: 307,
+      type: 'basic',
+      ok: false,
+      headers: { get: (k) => (String(k).toLowerCase() === 'location' ? location : null) },
+      json: async () => {
+        throw new Error('redirect')
+      },
+    }
+  }
+}
+
 const crewlog = createCrewlog({
-  fetch: (url, opts) => net.fetch(url, opts),
+  fetch: crewlogFetch,
   getConfig: () => ({ base: crewlogBase(), code: crewlogCode() }),
   load: () => readJson(crewlogOutboxPath, []),
   save: (list) => writeJson(crewlogOutboxPath, list),

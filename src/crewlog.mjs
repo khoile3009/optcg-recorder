@@ -17,7 +17,9 @@
  * player picks another event or discards it.
  */
 
-export const DEFAULT_BASE = 'https://getcrewlog.com'
+export const DEFAULT_BASE = 'https://www.getcrewlog.com'
+/** The old default. It now only redirects to www, so a saved copy of it means DEFAULT_BASE. */
+export const LEGACY_BASE = 'https://getcrewlog.com'
 export const CODE_RE = /^crw_[0-9a-f]{40}$/i
 /** Retry delays after a 5xx / network failure; the last one repeats. */
 export const BACKOFF_MS = [5_000, 30_000, 120_000, 600_000, 1_800_000]
@@ -100,9 +102,10 @@ export function buildGame(meta, leaders = []) {
   return { body }
 }
 
-/** What to do with a response: ok | retry | unauthorized | suspended | rejected | bug. */
+/** What to do with a response: ok | moved | retry | unauthorized | suspended | rejected | bug. */
 export function classify(status) {
   if (status >= 200 && status < 300) return 'ok'
+  if (status >= 300 && status < 400) return 'moved'
   if (status === 401) return 'unauthorized'
   if (status === 403) return 'suspended'
   if (status === 422) return 'rejected'
@@ -203,11 +206,21 @@ export function createCrewlog({
           ...(body ? { 'Content-Type': 'application/json' } : {}),
         },
         body: body ? JSON.stringify(body) : undefined,
-        redirect: 'error', // never carry the code to another host
+        redirect: 'manual', // never carry the code to another host: a redirect stops here
         signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(TIMEOUT_MS) : undefined,
       })
     } catch (e) {
+      if (e?.name !== 'TimeoutError' && /redirect/i.test(e?.message ?? ''))
+        return { status: 307, data: null, error: 'Crewlog answered with a redirect. Update the Crewlog address in Settings.', code: 'moved' }
       return { status: 0, data: null, error: `Can't reach Crewlog (${e?.name === 'TimeoutError' ? 'timed out' : 'network error'})` }
+    }
+    if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)) {
+      let to = null
+      try {
+        to = new URL(res.headers?.get?.('location') ?? '', `${origin}${pathname}`).origin
+      } catch {}
+      const where = to && to !== 'null' && to !== origin ? `Crewlog moved to ${to}.` : 'Crewlog answered with a redirect.'
+      return { status: res.status || 307, data: null, error: `${where} Update the Crewlog address in Settings.`, code: 'moved' }
     }
     let data = null
     try {
@@ -262,7 +275,7 @@ export function createCrewlog({
     }
     const kind = r.status ? classify(r.status) : 'retry'
     checkError = r.error
-    if (kind === 'unauthorized' || kind === 'suspended') block(kind, r.error)
+    if (kind === 'unauthorized' || kind === 'suspended' || kind === 'moved') block(kind, r.error)
     else changed()
     return { ok: false, status: r.status, error: r.error }
   }
@@ -298,8 +311,8 @@ export function createCrewlog({
       entry.lastError = r.error
       return false
     }
-    if (kind === 'unauthorized' || kind === 'suspended') {
-      block(kind, r.error) // keep the outbox for the next code
+    if (kind === 'unauthorized' || kind === 'suspended' || kind === 'moved') {
+      block(kind, r.error) // keep the outbox for the next code or address
       return false
     }
     const code = r.code
@@ -397,7 +410,7 @@ export function createCrewlog({
         return { ok: true, events: r.data.events.map(cleanEventRow).filter(Boolean).slice(0, 20) }
       if (r.status === 200) return { ok: false, error: 'Crewlog sent an unreadable event list' }
       const kind = r.status ? classify(r.status) : 'retry'
-      if (kind === 'unauthorized' || kind === 'suspended') block(kind, r.error)
+      if (kind === 'unauthorized' || kind === 'suspended' || kind === 'moved') block(kind, r.error)
       return { ok: false, error: r.error }
     },
     /** Waiting games go to this event now. A mismatched game skips the event that refused it. */
