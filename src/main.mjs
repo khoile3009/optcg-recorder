@@ -24,8 +24,8 @@ import { ASSETS, mergeLeaders, parseLeaders } from './leaderdb.mjs'
 import { LEADERS as BUNDLED_LEADERS } from './data/leaders.mjs'
 import { installUpdate, startUpdateChecks } from './updater.mjs'
 import { libDirProblem, moveRecordings, recordingIds, writableProblem } from './libmove.mjs'
-import { CODE_RE, DEFAULT_BASE, createCrewlog, localDate, normalizeBase } from './crewlog.mjs'
-import { cleanEvent, cleanEventName, eventFields, filedAs, knownEvents, needsRetag, newClientId, retagged, setFor, validClientId, wantedFiling } from './events.mjs'
+import { CODE_RE, DEFAULT_BASE, buildGame, createCrewlog, eventBody, localDate, normalizeBase } from './crewlog.mjs'
+import { cleanEvent, cleanEventName, knownEvents, newClientId, retagged, setFields, setFor, validClientId } from './events.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const POLL_MS = 2000
@@ -469,13 +469,18 @@ async function finalize(cur) {
     const prev = listRecordings().find((m) => m.id !== cur.id && m.status === 'done') ?? null
     meta.set = setFor({ match: meta.match, opp: game.opp, startedAt: meta.startedAt }, prev, localDate(Date.parse(meta.startedAt) || cur.startMs))
   }
-  if (settings.event && !meta.event) meta.event = { ...settings.event }
+  if (pickerMode()) {
+    // The picked tournament names the game's event locally too; a sim session doesn't.
+    const pick = settings.crewlogPick
+    if (!meta.event && settings.crewlogLogging && pick?.kind === 'tournament')
+      meta.event = cleanEvent({ client_id: newClientId(pick.id.replace(/-/g, '').slice(0, 12)), name: pick.name })
+  } else if (settings.event && !meta.event) meta.event = { ...settings.event }
   meta.tags = retagged(meta)
   await writeJson(metaPath(cur.id), meta)
   sendLibrary()
   if (Notification.isSupported())
     new Notification({ title: 'Game saved', body: `${meta.title}  (${Math.round(durationMs / 60000)} min)` }).show()
-  if (finished && game && crewlogHasCode()) void crewlog.enqueue(meta, leaders, eventFields(meta))
+  if (finished && game && crewlogHasCode()) logToCrewlog(meta)
 }
 
 /**
@@ -693,6 +698,13 @@ function crewlogCode() {
 /** The last thing worth telling the user: { ok, text, url?, at }. */
 let crewlogLast = null
 let crewlogWasBlocked = null
+/** The last event fetch: { list, fetchedAt, error }. Not persisted; the pick is. */
+let crewlogEvents = { list: null, fetchedAt: null, error: null }
+/** A one-line note about the pick (it was cleared, the event closed). */
+let crewlogNotice = null
+
+/** The event picker is on when the server says so, or (offline) when a pick is remembered. */
+const pickerMode = () => crewlog.pickerSupported() || !!settings.crewlogPick
 
 function notify(title, body, onClick) {
   if (!Notification.isSupported()) return
@@ -706,6 +718,20 @@ function openCrewlogUrl(url) {
   } catch {}
 }
 
+async function clearPick(notice, { loggingOff = false } = {}) {
+  settings.crewlogPick = null
+  if (loggingOff) settings.crewlogLogging = false
+  crewlogNotice = notice
+  await saveSettings()
+}
+
+const roundText = (ev) => {
+  const parts = [`Logged to ${ev.eventName ?? 'Crewlog'}`]
+  if (ev.round) parts.push(`Round ${ev.round}`)
+  if (ev.kind === 'tournament' && ev.roundResult !== undefined) parts.push(ev.roundResult ?? 'tied so far')
+  return parts.join(' · ')
+}
+
 const crewlog = createCrewlog({
   fetch: (url, opts) => net.fetch(url, opts),
   getConfig: () => ({ base: crewlogBase(), code: crewlogCode() }),
@@ -714,17 +740,26 @@ const crewlog = createCrewlog({
   log: (msg) => console.error(msg),
   onEvent: (ev) => {
     if (ev.type === 'logged') {
-      const text = `Logged to Crewlog${ev.newSession ? " · Started today's sim session" : ''}`
+      const text = ev.duplicate ? `Already in Crewlog${ev.eventName ? ` · ${ev.eventName}` : ''}` : roundText(ev)
       crewlogLast = { ok: true, text, url: ev.url, at: Date.now() }
-      notify('Logged to Crewlog', ev.newSession ? "Started today's sim session" : ev.handle ? `as @${ev.handle}` : 'Game added', ev.url ? () => openCrewlogUrl(ev.url) : null)
+      notify(ev.duplicate ? 'Already in Crewlog' : 'Logged to Crewlog', ev.duplicate ? text : ev.eventName ? text.replace(/^Logged to /, '') : ev.handle ? `as @${ev.handle}` : 'Game added', ev.url ? () => openCrewlogUrl(ev.url) : null)
       void noteLogged(ev)
     } else if (ev.type === 'dropped') {
       crewlogLast = { ok: false, text: `Crewlog didn't take a game: ${ev.error}`, at: Date.now() }
+    } else if (ev.type === 'eventGone') {
+      const closed = ev.reason === 'event_closed'
+      const name = settings.crewlogPick?.id === ev.eventId ? settings.crewlogPick.name : 'The event'
+      const text = closed ? `${name} was finished or hidden in Crewlog. Games stopped; pick another event to send the waiting game.` : `${name} isn't in Crewlog anymore. Fetch events and pick another.`
+      if (!settings.crewlogPick || settings.crewlogPick.id === ev.eventId) void clearPick(text, { loggingOff: closed }).then(sendStatus)
+      crewlogLast = { ok: false, text, at: Date.now() }
+      notify(closed ? 'Crewlog event closed' : 'Crewlog event gone', text)
+    } else if (ev.type === 'leaderMismatch') {
+      crewlogLast = { ok: false, text: ev.error, at: Date.now() }
+      notify('Not logged to Crewlog', `${ev.error} Pick another event to send it, or discard it.`)
     } else if (ev.type === 'unknownLeader') {
       crewlogLast = { ok: false, text: "Can't log, unknown leader", at: Date.now() }
       notify('Not logged to Crewlog', "Can't log, unknown leader")
     } else if (ev.type === 'state') {
-      if (crewlog.supportsEvents()) void reconcile()
       const { blocked, error } = crewlog.state()
       if (blocked && blocked !== crewlogWasBlocked)
         notify('Crewlog stopped logging', blocked === 'unauthorized' ? `${error} Make a new code in Crewlog and paste it in Settings.` : error)
@@ -734,48 +769,79 @@ const crewlog = createCrewlog({
   },
 })
 
-/** Remember where Crewlog filed a game, so a later tag change can move it there with PATCH. */
+/** Remember where Crewlog filed a game. */
 async function noteLogged(ev) {
   if (!idOk(ev.recId) || !ev.gameId) return
   const m = readJson(metaPath(ev.recId), null)
   if (!m) return
   try {
-    await updateMeta(ev.recId, { crewlog: { gameId: ev.gameId, filed: filedAs(ev.kind, ev.sent) } })
+    await updateMeta(ev.recId, { crewlog: { gameId: ev.gameId, eventId: ev.eventId ?? null, url: ev.url ?? null } })
   } catch {}
-  void reconcile()
 }
 
-/**
- * Move logged games whose event tag changed (or that were logged before the
- * server knew events) to where they belong now. One pass at a time; stops at
- * the first error worth retrying and picks up on the next trigger.
- */
-let reconciling = false
-async function reconcile() {
-  if (reconciling || !crewlogHasCode() || !crewlog.supportsEvents()) return
-  reconciling = true
-  try {
-    for (const m of needsRetag(listRecordings())) {
-      const fields = eventFields(m)
-      const r = await crewlog.retag(m.crewlog.gameId, fields)
-      if (r.ok) await updateMeta(m.id, { crewlog: { gameId: m.crewlog.gameId, filed: filedAs(r.kind, fields) } })
-      else if (r.code === 'unknown_game') await updateMeta(m.id, { crewlog: { ...m.crewlog, filed: null } })
-      else if (r.code === 'rejected') {
-        await updateMeta(m.id, { crewlog: { ...m.crewlog, failedFor: wantedFiling(m), error: r.error } })
-        crewlogLast = { ok: false, text: `Crewlog didn't move a game: ${r.error}`, at: Date.now() }
-      } else break
-    }
-  } catch (e) {
-    console.error('crewlog reconcile', e)
-  } finally {
-    reconciling = false
-    sendStatus()
+/** A finished game goes to Crewlog: to the picked event, or (old servers) plain. */
+function logToCrewlog(meta) {
+  if (!pickerMode()) return void crewlog.enqueue(meta, leaders)
+  const pick = settings.crewlogPick
+  if (!settings.crewlogLogging || !pick) return // logging off: nothing is sent or queued
+  if (pick.kind === 'tournament' && pick.my_leader) {
+    const built = buildGame(meta, leaders)
+    if (built.body && built.body.my_leader !== pick.my_leader)
+      notify('Different leader', `This game's leader (${built.body.my_leader}) isn't ${pick.name}'s (${pick.my_leader}). Crewlog may refuse it.`)
   }
+  void crewlog.enqueue(meta, leaders, eventBody(pick.id, setFields(meta)))
+}
+
+/** GET /events, then check the remembered pick against the list. */
+let fetchingEvents = null
+function fetchCrewlogEvents() {
+  if (fetchingEvents) return fetchingEvents
+  fetchingEvents = (async () => {
+    if (!crewlog.state().handle) {
+      const c = await crewlog.check()
+      if (!c.ok) {
+        crewlogEvents = { ...crewlogEvents, error: c.error }
+        return { ok: false, error: c.error }
+      }
+    }
+    const r = await crewlog.events()
+    if (!r.ok) {
+      crewlogEvents = { ...crewlogEvents, error: r.error }
+      return r
+    }
+    crewlogEvents = { list: r.events, fetchedAt: Date.now(), error: null }
+    const pick = settings.crewlogPick
+    if (pick) {
+      const row = r.events.find((e) => e.id === pick.id)
+      if (row) settings.crewlogPick = { id: row.id, name: row.name, kind: row.kind, my_leader: row.my_leader }
+      else {
+        const text = `${pick.name} isn't open in Crewlog anymore, so the pick was cleared.`
+        await clearPick(text)
+        notify('Crewlog event cleared', text)
+      }
+      await saveSettings()
+    }
+    return { ok: true, events: r.events }
+  })()
+  return fetchingEvents.finally(() => {
+    fetchingEvents = null
+    sendStatus()
+  })
 }
 
 function crewlogStatus() {
   const s = crewlog.state()
-  return { hasCode: crewlogHasCode(), base: crewlogBase(), ...s, last: crewlogLast }
+  return {
+    hasCode: crewlogHasCode(),
+    base: crewlogBase(),
+    ...s,
+    picker: pickerMode(),
+    pick: settings.crewlogPick ?? null,
+    logging: !!settings.crewlogLogging && !!settings.crewlogPick,
+    events: crewlogEvents,
+    notice: crewlogNotice,
+    last: crewlogLast,
+  }
 }
 
 /** { code?, base? }: a new code and/or base URL, then a connection check. */
@@ -793,14 +859,49 @@ ipcMain.handle('crewlog:set', async (_e, patch = {}) => {
     await fsp.writeFile(crewlogKeyPath, safeStorage.encryptString(code))
   }
   crewlog.reset()
+  crewlogEvents = { list: null, fetchedAt: null, error: null }
   if (!crewlogHasCode()) return { ok: true }
-  return crewlog.check()
+  const r = await crewlog.check()
+  if (r.ok && crewlog.pickerSupported()) void fetchCrewlogEvents()
+  return r
 })
 ipcMain.handle('crewlog:check', () => (crewlogHasCode() ? crewlog.check() : { ok: false, error: 'Paste a connector code first.' }))
 ipcMain.handle('crewlog:forget', async () => {
   await fsp.rm(crewlogKeyPath, { force: true })
   crewlog.reset()
+  crewlogEvents = { list: null, fetchedAt: null, error: null }
   return { ok: true }
+})
+ipcMain.handle('crewlog:events', () => (crewlogHasCode() ? fetchCrewlogEvents() : { ok: false, error: 'Paste a connector code first.' }))
+/** Pick a fetched event by id (logging turns on), or null to clear the pick. */
+ipcMain.handle('crewlog:pick', async (_e, id) => {
+  if (id == null) {
+    settings.crewlogPick = null
+    settings.crewlogLogging = false
+  } else {
+    const row = crewlogEvents.list?.find((e) => e.id === id)
+    if (!row) return { ok: false, error: 'Fetch events first.' }
+    settings.crewlogPick = { id: row.id, name: row.name, kind: row.kind, my_leader: row.my_leader }
+    settings.crewlogLogging = true
+  }
+  crewlogNotice = null
+  await saveSettings()
+  sendStatus()
+  return { ok: true }
+})
+ipcMain.handle('crewlog:setLogging', async (_e, on) => {
+  if (on && !settings.crewlogPick) return { ok: false, error: 'Pick an event first.' }
+  settings.crewlogLogging = !!on
+  await saveSettings()
+  sendStatus()
+  return { ok: true }
+})
+/** Games held back by a gone/closed event or a leader mismatch: 'send' to the pick, or 'discard'. */
+ipcMain.handle('crewlog:waiting', async (_e, what) => {
+  if (what === 'discard') return { ok: true, count: await crewlog.discardWaiting() }
+  if (what !== 'send') return { ok: false, error: 'Bad request' }
+  if (!settings.crewlogPick) return { ok: false, error: 'Pick an event first.' }
+  return { ok: true, count: await crewlog.assignWaiting(settings.crewlogPick.id) }
 })
 /** Event mode: { name, client_id? } turns it on (client_id picks a known event), null turns it off. */
 ipcMain.handle('app:setEvent', async (_e, ev) => {
@@ -852,7 +953,8 @@ ipcMain.handle('lib:update', (_e, id, patch) =>
 )
 /**
  * Tag a saved game with an event (or untag it with null). With wholeSet the
- * other games of its set get the same tag. Logged games move with PATCH.
+ * other games of its set get the same tag. Only the local tag changes:
+ * a misfiled round is moved in Crewlog.
  */
 ipcMain.handle('lib:setEvent', async (_e, id, ev, opts = {}) => {
   if (!idOk(id)) throw new Error('Bad id')
@@ -870,9 +972,7 @@ ipcMain.handle('lib:setEvent', async (_e, id, ev, opts = {}) => {
   for (const m of games) {
     const next = { ...m, event }
     await updateMeta(m.id, { event, tags: retagged(next) })
-    await crewlog.requeue(String(m.gameId || m.id).slice(0, 100), eventFields(next))
   }
-  void reconcile()
   return { ok: true, count: games.length }
 })
 ipcMain.handle('lib:delete', async (_e, id) => {
@@ -1057,8 +1157,12 @@ else {
     // Recordings interrupted by a crash or a closed app: mark them, keep the video.
     for (const m of listRecordings()) if (m.status === 'recording') await updateMeta(m.id, { status: 'done', tags: [...(m.tags ?? []), 'interrupted'] })
     await backfillResults()
-    // Games that didn't make it last time; tag changes need /me first to know the server takes events.
-    if (crewlogHasCode() && needsRetag(listRecordings()).length) void crewlog.check()
+    // /me sends what didn't make it last time and says whether the event picker is on;
+    // if it is, fetch the open events once (no polling).
+    if (crewlogHasCode())
+      void crewlog.check().then((r) => {
+        if (r.ok && crewlog.pickerSupported()) void fetchCrewlogEvents()
+      })
     else void crewlog.flush()
 
     // getDisplayMedia in the recorder window gets the source we pick here; no picker UI.

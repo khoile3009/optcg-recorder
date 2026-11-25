@@ -326,7 +326,10 @@ document.addEventListener('click', (e) => {
 // ─── Event mode ───────────────────────────────────────────────────────────
 
 let eventKeys = ''
+const pickerOn = () => !!status?.crewlog?.picker
 function renderEventMode() {
+  if (pickerOn()) return renderEventPicker()
+  $('pickPop').hidden = true
   const ev = status.event
   $('eventBtn').classList.toggle('on', !!ev)
   $('eventText').textContent = ev ? `Event: ${ev.name}` : 'Sim session'
@@ -347,6 +350,17 @@ const showEventErr = (msg) => {
 }
 $('eventBtn').onclick = (e) => {
   e.stopPropagation()
+  if (pickerOn()) {
+    $('eventPop').hidden = true
+    const open = $('pickPop').hidden
+    $('pickPop').hidden = !open
+    $('eventBtn').setAttribute('aria-expanded', String(open))
+    if (open) {
+      pickErr = null
+      renderEventPicker()
+    }
+    return
+  }
   const open = $('eventPop').hidden
   $('eventPop').hidden = !open
   $('eventBtn').setAttribute('aria-expanded', String(open))
@@ -371,11 +385,124 @@ $('eventStop').onclick = async () => {
   $('eventPop').hidden = true
 }
 document.addEventListener('click', (e) => {
-  if (!$('eventPop').hidden && !$('eventWrap').contains(e.target)) $('eventPop').hidden = true
+  if ($('eventWrap').contains(e.target)) return
+  $('eventPop').hidden = true
+  $('pickPop').hidden = true
 })
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !$('eventPop').hidden) $('eventPop').hidden = true
+  if (e.key !== 'Escape') return
+  $('eventPop').hidden = true
+  $('pickPop').hidden = true
 })
+
+// ─── Crewlog event picker (servers that list events) ──────────────────────
+
+let pickErr = null // the last failed action in the picker
+let pickBusy = false
+const KIND_LABEL = { sim: 'Sim', tournament: 'Tournament' }
+const leaderLabel = (id) => (id ? (LEADER.get(id)?.name ?? id) : 'any leader')
+const fmtAgo = (at) => {
+  const s = Math.round((Date.now() - at) / 1000)
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`
+  return new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+
+function renderEventPicker() {
+  const c = status.crewlog
+  const pick = c.pick
+  const btn = $('eventBtn')
+  btn.classList.toggle('on', !!c.logging)
+  $('eventText').textContent = c.logging ? `Adding games to ${pick.name}` : 'Not adding games'
+  btn.title = c.logging
+    ? `Finished games go to ${pick.name} in Crewlog. Click to switch events or stop.`
+    : 'Finished games are saved here but not sent to Crewlog. Click to pick an event.'
+
+  const ev = c.events ?? {}
+  $('pickFetched').textContent = pickBusy ? 'Fetching…' : ev.fetchedAt ? `Fetched ${fmtAgo(ev.fetchedAt)}` : ''
+  $('pickFetch').disabled = pickBusy || !c.hasCode
+
+  const err = pickErr ?? ev.error ?? (!c.hasCode ? 'Paste a connector code in Settings first.' : null)
+  $('pickErr').hidden = !err
+  $('pickErr').textContent = err ?? ''
+
+  $('pickNotice').hidden = !c.notice
+  $('pickNotice').textContent = c.notice ?? ''
+
+  const list = $('pickList')
+  if (!ev.list) list.replaceChildren(el('div', 'hint', pick ? `Picked: ${pick.name}. Fetch events to see the rest.` : 'Fetch events to see what you can log to.'))
+  else if (!ev.list.length) list.replaceChildren(el('div', 'hint', 'No open events. Start a sim session or tournament in Crewlog, then fetch again.'))
+  else
+    list.replaceChildren(
+      ...ev.list.map((row) => {
+        const b = el('button', `pickRow${pick?.id === row.id ? ' on' : ''}`)
+        b.type = 'button'
+        b.setAttribute('role', 'option')
+        b.setAttribute('aria-selected', String(pick?.id === row.id))
+        const top = el('div', 'pickTop')
+        top.append(el('span', 'pickName', row.name), el('span', `pickKind ${row.kind}`, KIND_LABEL[row.kind] ?? row.kind))
+        const bits = [`${row.wins}-${row.losses}`]
+        if (row.played_on) bits.push(row.played_on)
+        bits.push(leaderLabel(row.my_leader))
+        b.append(top, el('div', 'pickMeta hint', bits.join(' · ')))
+        b.onclick = () => pickDo(api.crewlogPick(row.id))
+        return b
+      }),
+    )
+
+  $('pickLogging').checked = !!c.logging
+  $('pickLogging').disabled = !pick
+  $('pickLoggingText').textContent = pick ? `Add finished games to ${pick.name}` : 'Pick an event to add games'
+
+  const waiting = c.waiting ?? 0
+  $('pickWaiting').hidden = !waiting
+  if (waiting) {
+    const what = `${waiting} game${waiting === 1 ? '' : 's'} waiting`
+    $('pickWaitingText').textContent = c.waitingError ? `${what}: ${c.waitingError}` : `${what} for an event.`
+    $('pickSend').textContent = pick ? `Send to ${pick.name}` : 'Send'
+    $('pickSend').disabled = !pick
+  }
+
+  const box = $('pickLast')
+  box.replaceChildren()
+  const last = c.last
+  if (last) {
+    box.className = `hint ${last.ok ? '' : 'bad'}`
+    box.append(last.text)
+    if (last.url) {
+      const a = el('a', null, 'View')
+      a.href = '#'
+      a.onclick = (e) => {
+        e.preventDefault()
+        void api.crewlogOpen(last.url)
+      }
+      box.append(' · ', a)
+    }
+  }
+}
+async function pickDo(p) {
+  const res = await p
+  pickErr = res?.ok ? null : (res?.error ?? 'Something went wrong.')
+  status = await api.status()
+  renderStatus()
+}
+$('pickFetch').onclick = async () => {
+  pickBusy = true
+  renderEventPicker()
+  try {
+    await pickDo(api.crewlogEvents())
+  } finally {
+    pickBusy = false
+    renderEventPicker()
+  }
+}
+$('pickLogging').onchange = (e) => pickDo(api.crewlogSetLogging(e.target.checked))
+$('pickSend').onclick = () => pickDo(api.crewlogWaiting('send'))
+$('pickDiscard').onclick = () => {
+  const n = status?.crewlog?.waiting ?? 0
+  if (confirm(`Discard ${n === 1 ? 'the waiting game' : `${n} waiting games`}? ${n === 1 ? 'It stays' : 'They stay'} in your library but won't go to Crewlog.`))
+    void pickDo(api.crewlogWaiting('discard'))
+}
 
 // ─── Sidebar: filters ─────────────────────────────────────────────────────
 

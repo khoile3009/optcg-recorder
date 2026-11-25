@@ -32,6 +32,28 @@
           </div>
           <div id="eventErr" class="hint bad" hidden></div>
         </form>
+        <div id="pickPop" class="popover eventPop pickPop" hidden>
+          <div class="pickHead">
+            <h3>Crewlog event</h3>
+            <span id="pickFetched" class="hint"></span>
+            <div class="grow"></div>
+            <button type="button" id="pickFetch">Fetch events</button>
+          </div>
+          <div id="pickWaiting" class="pickWaiting" hidden>
+            <span id="pickWaitingText"></span>
+            <div class="row">
+              <button type="button" id="pickSend" class="primary">Send</button>
+              <button type="button" id="pickDiscard">Discard</button>
+            </div>
+          </div>
+          <div id="pickNotice" class="hint pickNotice" hidden></div>
+          <div id="pickList" class="pickList" role="listbox" aria-label="Open Crewlog events"></div>
+          <div id="pickErr" class="hint bad" hidden></div>
+          <label class="pickToggle"
+            ><input type="checkbox" id="pickLogging" /> <span id="pickLoggingText">Add finished games to this event</span></label
+          >
+          <div id="pickLast" class="hint"></div>
+        </div>
       </div>
       <div class="grow"></div>
       <button id="upgradeBtn" class="primary" hidden title="Start recording video for the rest of this game">● Record this game</button>

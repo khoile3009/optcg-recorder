@@ -3,12 +3,10 @@ import assert from 'node:assert/strict'
 import {
   REMATCH_GAP_MS,
   cleanEvent,
-  eventFields,
-  filedAs,
   knownEvents,
-  needsRetag,
   newClientId,
   retagged,
+  setFields,
   setFor,
   setIdFor,
   setLabel,
@@ -66,36 +64,18 @@ test('setFor: no set without a match, for another opponent, or after a long gap'
   assert.equal(setFor(rematch(), { ...prev, set: { ...prev.set, game: 9 } }, 'd').game, 9, 'capped at 9')
 })
 
-test('eventFields: sim games send kind only; event games the event, set and game', () => {
-  assert.deepEqual(eventFields({}), { kind: 'sim' })
-  assert.deepEqual(eventFields({ match: { source: 'queue' } }), { kind: 'sim', match_source: 'queue' })
-  assert.deepEqual(eventFields({ event: EV, set: { id: 's_abc', room: 'ROOM1', game: 2 }, match: { source: 'private', room: 'ROOM1' } }), {
-    kind: 'event',
-    event: EV,
+test('setFields: valid set and source only, no room code or opponent', () => {
+  assert.deepEqual(setFields({}), {})
+  assert.deepEqual(setFields({ match: { source: 'queue' } }), { match_source: 'queue' })
+  assert.deepEqual(setFields({ set: { id: 's_abc', room: 'ROOM1', game: 2 }, match: { source: 'private', room: 'ROOM1' } }), {
     set_id: 's_abc',
     game_in_set: 2,
     match_source: 'private',
   })
-  assert.deepEqual(eventFields({ event: { client_id: 'bad id', name: 'x' } }), { kind: 'sim' })
-  const sent = JSON.stringify(eventFields({ event: EV, set: { id: 's_abc', room: 'ROOM1', game: 1 }, opp: { name: 'Bob#2222' } }))
-  assert.ok(!sent.includes('ROOM1') && !sent.includes('Bob'), 'no room code or opponent name')
-})
-
-test('needsRetag and filedAs', () => {
-  assert.equal(filedAs('event', { event: EV }), `event:${EV.client_id}`)
-  assert.equal(filedAs('sim', { event: EV }), 'sim', 'server filed it as sim')
-  assert.equal(filedAs('event', null), 'sim')
-  const metas = [
-    { id: 'a', crewlog: { gameId: 'g1', filed: 'sim' } }, // fine
-    { id: 'b', event: EV, crewlog: { gameId: 'g2', filed: 'sim' } }, // tagged afterwards
-    { id: 'c', crewlog: { gameId: 'g3', filed: `event:${EV.client_id}` } }, // untagged afterwards
-    { id: 'd', event: EV, crewlog: { gameId: 'g4', filed: 'sim', failedFor: `event:${EV.client_id}` } }, // already failed
-    { id: 'e', event: EV }, // never logged
-  ]
-  assert.deepEqual(
-    needsRetag(metas).map((m) => m.id),
-    ['b', 'c'],
-  )
+  assert.deepEqual(setFields({ set: { id: 'bad id', game: 2 } }), {}, 'no game number without a set id')
+  assert.deepEqual(setFields({ set: { id: 's_abc', game: 0 }, match: { source: 'lobby' } }), { set_id: 's_abc' })
+  const sent = JSON.stringify(setFields({ set: { id: 's_abc', room: 'ROOM1', game: 1 }, opp: { name: 'Bob#2222' } }))
+  assert.ok(!sent.includes('ROOM1') && !sent.includes('Bob'))
 })
 
 test('knownEvents: newest first, latest name wins, current event included', () => {

@@ -8,7 +8,8 @@ import {
   createCrewlog,
   normalizeBase,
   resolveLeader,
-  withEventFields,
+  cleanEventRow,
+  eventBody,
   retryDelay,
 } from '../src/crewlog.mjs'
 
@@ -142,7 +143,7 @@ test('classify + retryDelay', () => {
 // ─── the connector ──────────────────────────────────────────────────────────
 
 test('logs a game: Bearer to the configured base only, event with link', async () => {
-  const h = harness({ responses: [ok({ new_session: true })] })
+  const h = harness({ responses: [ok()] })
   const r = await h.c.enqueue(meta(), LEADERS)
   assert.deepEqual(r, { queued: 'abc123' })
   await h.settle()
@@ -155,7 +156,6 @@ test('logs a game: Bearer to the configured base only, event with link', async (
   assert.equal(call.body.game_id, 'abc123')
   const logged = h.events.find((e) => e.type === 'logged')
   assert.equal(logged.url, 'https://getcrewlog.com/e/1')
-  assert.equal(logged.newSession, true)
   assert.equal(h.c.state().pending, 0)
   assert.equal(h.c.state().handle, 'khoi')
   assert.ok(!JSON.stringify(h.saved).includes(CODE), 'the code never lands in the outbox file')
@@ -316,79 +316,190 @@ test('check() after a 401 with a new code unblocks and flushes', async () => {
   assert.equal(h.c.state().pending, 0)
 })
 
-// ─── events (docs/crewlog-events-spec.md) ────────────────────────────────────
-const EVF = { kind: 'event', event: { client_id: 'ev_0123456789ab', name: 'Weekly Bash' }, set_id: 's_aaaaaaaaaaaa', game_in_set: 1, match_source: 'private' }
+// ─── event picker ───────────────────────────────────────────────────────────
 const me200 = (features) => ({ status: 200, body: { handle: 'khoi', ...(features ? { features } : {}) } })
+const ROWS = [
+  { id: 'ev_sim1', name: 'Sim grind', kind: 'sim', played_on: '2026-11-24', rounds: 3, wins: 2, losses: 1 },
+  { id: 'ev_t1', name: 'Weekly Cup', kind: 'tournament', category: 'locals', my_leader: 'OP01-001', played_on: '2026-11-25' },
+]
 
-test('event game: /me first, event fields sent when the server lists events', async () => {
-  const h = harness({ responses: [me200(['events']), ok({ kind: 'event' })] })
-  await h.c.enqueue(meta(), LEADERS, EVF)
-  await h.settle()
-  await h.settle()
-  assert.equal(h.calls[0].url, 'https://getcrewlog.com/api/recorder/me')
-  assert.ok(h.c.supportsEvents())
-  const post = h.calls[1]
-  assert.equal(post.body.kind, 'event')
-  assert.deepEqual(post.body.event, EVF.event)
-  assert.equal(post.body.set_id, EVF.set_id)
-  const logged = h.events.find((e) => e.type === 'logged')
-  assert.equal(logged.kind, 'event')
-  assert.deepEqual(logged.sent, EVF)
-  assert.equal(h.c.state().events, true)
+test('picker support comes from /me features', async () => {
+  const h = harness({ responses: [me200(['event_picker']), me200()] })
+  assert.equal(h.c.pickerSupported(), false, 'unknown before /me')
+  await h.c.check()
+  assert.equal(h.c.pickerSupported(), true)
+  assert.equal(h.c.state().picker, true)
+  h.c.reset()
+  assert.equal(h.c.pickerSupported(), false, 'reset forgets features')
+  await h.c.check()
+  assert.equal(h.c.pickerSupported(), false)
 })
 
-test('event game: a server without events gets the plain body', async () => {
-  const h = harness({ responses: [me200(), ok()] })
-  await h.c.enqueue(meta(), LEADERS, EVF)
-  await h.settle()
-  await h.settle()
-  assert.ok(!h.c.supportsEvents())
-  const post = h.calls[1]
-  assert.equal(post.body.kind, undefined)
-  assert.equal(post.body.event, undefined)
-  const logged = h.events.find((e) => e.type === 'logged')
-  assert.equal(logged.kind, 'sim')
-  assert.equal(logged.sent, null)
+test('events(): GET /events with the Bearer, rows cleaned', async () => {
+  const h = harness({ responses: [{ status: 200, body: { events: [...ROWS, { id: 'bad id!' }, null] } }] })
+  const r = await h.c.events()
+  assert.equal(h.calls[0].url, 'https://getcrewlog.com/api/recorder/events')
+  assert.equal(h.calls[0].method, 'GET')
+  assert.equal(h.calls[0].headers.Authorization, `Bearer ${CODE}`)
+  assert.equal(r.ok, true)
+  assert.deepEqual(
+    r.events.map((e) => [e.id, e.kind]),
+    [
+      ['ev_sim1', 'sim'],
+      ['ev_t1', 'tournament'],
+    ],
+  )
+  assert.equal(r.events[1].my_leader, 'OP01-001')
+  assert.equal(r.events[0].wins, 2)
 })
 
-test('requeue swaps a queued game\'s fields; false once it has gone', async () => {
-  const h = harness({ responses: [new Error('offline'), new Error('offline')] })
+test('events(): unreadable list, 401 blocks, and no request while blocked', async () => {
+  const h = harness({ responses: [{ status: 200, body: { nope: 1 } }, { status: 401, body: { error: 'Unknown code' } }] })
+  assert.equal((await h.c.events()).ok, false)
+  const r = await h.c.events()
+  assert.equal(r.error, 'Unknown code')
+  assert.equal(h.c.state().blocked, 'unauthorized')
+  await h.c.events()
+  assert.equal(h.calls.length, 2)
+})
+
+test('cleanEventRow defaults and limits', () => {
+  assert.equal(cleanEventRow(null), null)
+  assert.equal(cleanEventRow({ id: 'x y' }), null)
+  const r = cleanEventRow({ id: 'e1', kind: 'weird', rounds: -2, wins: 1.5, played_on: 'tomorrow', name: 'n'.repeat(500) })
+  assert.equal(r.kind, 'tournament')
+  assert.equal(r.rounds, 0)
+  assert.equal(r.wins, 0)
+  assert.equal(r.played_on, null)
+  assert.equal(r.name.length, 120)
+  assert.equal(cleanEventRow({ id: 'e2' }).name, 'Untitled event')
+})
+
+test('eventBody keeps only valid set fields', () => {
+  assert.deepEqual(eventBody('e1'), { event_id: 'e1' })
+  assert.deepEqual(eventBody('e1', { set_id: 's_1', game_in_set: 2, match_source: 'private' }), {
+    event_id: 'e1',
+    set_id: 's_1',
+    game_in_set: 2,
+    match_source: 'private',
+  })
+  assert.deepEqual(eventBody('e1', { set_id: 'bad id', game_in_set: 2, match_source: 'lobby' }), { event_id: 'e1' })
+  assert.deepEqual(eventBody('e1', { set_id: 's_1', game_in_set: 12 }), { event_id: 'e1', set_id: 's_1' })
+})
+
+test('picked event: event_id and set fields in the POST, logged carries the round', async () => {
+  const h = harness({ responses: [ok({ event_id: 'ev_t1', event_name: 'Weekly Cup', kind: 'tournament', round: 2, round_result: 'W' })] })
+  await h.c.enqueue(meta(), LEADERS, eventBody('ev_t1', { set_id: 's_1', game_in_set: 1, match_source: 'private' }))
+  await h.settle()
+  const body = h.calls[0].body
+  assert.equal(body.event_id, 'ev_t1')
+  assert.equal(body.set_id, 's_1')
+  assert.equal(body.game_in_set, 1)
+  assert.equal(body.match_source, 'private')
+  assert.equal(body.game_id, 'abc123')
+  const logged = h.events.find((e) => e.type === 'logged')
+  assert.equal(logged.eventId, 'ev_t1')
+  assert.equal(logged.eventName, 'Weekly Cup')
+  assert.equal(logged.kind, 'tournament')
+  assert.equal(logged.round, 2)
+  assert.equal(logged.roundResult, 'W')
+})
+
+test('a duplicate to a picked event is a success', async () => {
+  const h = harness({ responses: [ok({ duplicate: true, event_id: 'ev_t1' })] })
+  await h.c.enqueue(meta(), LEADERS, eventBody('ev_t1'))
+  await h.settle()
+  assert.equal(h.events.find((e) => e.type === 'logged').duplicate, true)
+  assert.equal(h.c.state().pending, 0)
+  assert.equal(h.c.state().waiting, 0)
+})
+
+for (const [status, code] of [
+  [404, 'unknown_event'],
+  [422, 'event_closed'],
+]) {
+  test(`${code}: the game waits, eventGone fires, assignWaiting sends it on`, async () => {
+    const h = harness({ responses: [{ status, body: { error: 'gone', code } }, ok({ event_id: 'ev_2' })] })
+    await h.c.enqueue(meta(), LEADERS, eventBody('ev_1'))
+    await h.settle()
+    const gone = h.events.find((e) => e.type === 'eventGone')
+    assert.deepEqual([gone.reason, gone.eventId], [code, 'ev_1'])
+    const st = h.c.state()
+    assert.deepEqual([st.waiting, st.pending, st.waitingReason], [1, 0, code])
+    assert.equal(h.timers.length, 0, 'no retry timer for a waiting game')
+    await h.c.flush()
+    assert.equal(h.calls.length, 1, 'flush leaves waiting games alone')
+    assert.equal(await h.c.assignWaiting('ev_2'), 1)
+    await h.settle()
+    assert.equal(h.calls[1].body.event_id, 'ev_2')
+    assert.equal(h.c.state().waiting, 0)
+    assert.ok(h.events.some((e) => e.type === 'logged' && e.eventId === 'ev_2'))
+  })
+}
+
+test('leader_mismatch waits; assignWaiting skips the event that refused it', async () => {
+  const h = harness({ responses: [{ status: 422, body: { error: 'Wrong leader', code: 'leader_mismatch' } }, ok({ event_id: 'ev_2' })] })
+  await h.c.enqueue(meta(), LEADERS, eventBody('ev_1'))
+  await h.settle()
+  assert.ok(h.events.some((e) => e.type === 'leaderMismatch' && e.eventId === 'ev_1'))
+  assert.equal(h.c.state().waitingReason, 'leader_mismatch')
+  assert.equal(await h.c.assignWaiting('ev_1'), 0)
+  assert.equal(h.calls.length, 1)
+  assert.equal(await h.c.assignWaiting('ev_2'), 1)
+  await h.settle()
+  assert.equal(h.calls[1].body.event_id, 'ev_2')
+})
+
+test('discardWaiting drops waiting games only', async () => {
+  const h = harness({ responses: [{ status: 422, body: { error: 'closed', code: 'event_closed' } }, new Error('offline')] })
+  await h.c.enqueue(meta(), LEADERS, eventBody('ev_1'))
+  await h.settle()
+  await h.c.enqueue(meta({ id: 'rec-2', gameId: 'def456' }), LEADERS, eventBody('ev_1'))
+  await h.settle()
+  assert.deepEqual([h.c.state().waiting, h.c.state().pending], [1, 1])
+  assert.equal(await h.c.discardWaiting(), 1)
+  assert.deepEqual([h.c.state().waiting, h.c.state().pending], [0, 1])
+})
+
+test('bad_set_id: resent once right away without the set fields', async () => {
+  const h = harness({ responses: [{ status: 422, body: { error: 'bad set', code: 'bad_set_id' } }, ok({ event_id: 'ev_1' })] })
+  await h.c.enqueue(meta(), LEADERS, eventBody('ev_1', { set_id: 's_1', game_in_set: 2, match_source: 'queue' }))
+  await h.settle()
+  assert.equal(h.calls.length, 2)
+  assert.equal(h.calls[1].body.set_id, undefined)
+  assert.equal(h.calls[1].body.game_in_set, undefined)
+  assert.equal(h.calls[1].body.match_source, 'queue')
+  assert.equal(h.calls[1].body.event_id, 'ev_1')
+  assert.equal(h.c.state().pending, 0)
+})
+
+test('bad_set_id twice: the second refusal drops the game', async () => {
+  const bad = { status: 422, body: { error: 'bad set', code: 'bad_set_id' } }
+  const h = harness({ responses: [bad, bad] })
+  await h.c.enqueue(meta(), LEADERS, eventBody('ev_1', { set_id: 's_1' }))
+  await h.settle()
+  assert.equal(h.calls.length, 2)
+  assert.ok(h.events.some((e) => e.type === 'dropped'))
+  assert.equal(h.c.state().pending, 0)
+})
+
+test('event_required is dropped as our bug', async () => {
+  const h = harness({ responses: [{ status: 422, body: { error: 'Pick an event', code: 'event_required' } }] })
   await h.c.enqueue(meta(), LEADERS)
   await h.settle()
-  assert.equal(await h.c.requeue('abc123', EVF), true)
-  assert.equal(await h.c.requeue('nope', EVF), false)
+  const d = h.events.find((e) => e.type === 'dropped')
+  assert.equal(d.bug, true)
+  assert.equal(h.c.state().pending, 0)
+  assert.equal(h.c.state().waiting, 0)
 })
 
-test('retag: unsupported before /me, PATCH when supported, 404 and 401 mapped', async () => {
-  const h = harness({
-    responses: [
-      me200(['events']),
-      ok({ kind: 'event' }),
-      { status: 404, body: { error: 'Unknown game', code: 'unknown_game' } },
-      { status: 401, body: { error: 'Unknown code', code: 'x' } },
-    ],
-  })
-  assert.equal((await h.c.retag('abc123', EVF)).code, 'unsupported')
-  assert.equal(h.calls.length, 0)
-  await h.c.check()
-  const r = await h.c.retag('abc 123', EVF)
-  assert.equal(r.ok, true)
-  assert.equal(r.kind, 'event')
-  const patch = h.calls[1]
-  assert.equal(patch.method, 'PATCH')
-  assert.equal(patch.url, 'https://getcrewlog.com/api/recorder/games/abc%20123')
-  assert.equal(patch.headers.Authorization, `Bearer ${CODE}`)
-  assert.deepEqual(patch.body, EVF)
-  assert.equal((await h.c.retag('abc123', { kind: 'sim' })).code, 'unknown_game')
-  assert.equal((await h.c.retag('abc123', { kind: 'sim' })).code, 'blocked')
-  assert.equal((await h.c.retag('abc123', { kind: 'sim' })).code, 'blocked', 'no request while blocked')
-  assert.equal(h.calls.length, 4)
-})
-
-test('withEventFields: merged only while the body stays small', () => {
-  const body = { game_id: 'g', result: 'W' }
-  assert.deepEqual(withEventFields(body, null), body)
-  assert.deepEqual(withEventFields(body, { kind: 'sim' }), { ...body, kind: 'sim' })
-  const huge = { kind: 'event', event: { client_id: 'ev_1', name: 'x'.repeat(5000) } }
-  assert.deepEqual(withEventFields(body, huge), body)
+test('waiting games survive a restart', async () => {
+  const h = harness({ responses: [{ status: 404, body: { error: 'gone', code: 'unknown_event' } }] })
+  await h.c.enqueue(meta(), LEADERS, eventBody('ev_1'))
+  await h.settle()
+  const stored = h.saved[h.saved.length - 1]
+  const h2 = harness({ stored, responses: [] })
+  assert.equal(h2.c.state().waiting, 1)
+  await h2.c.flush()
+  assert.equal(h2.calls.length, 0)
 })

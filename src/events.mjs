@@ -9,8 +9,8 @@
  * none, so they inherit the set of the game just before them when it was
  * against the same opponent and finished not long ago.
  *
- * What goes to Crewlog (docs/crewlog-events-spec.md) never carries the room
- * code or the opponent's name: set_id is a hash of both.
+ * What goes to Crewlog never carries the room code or the opponent's name:
+ * set_id is a hash of both.
  */
 import { createHash } from 'node:crypto'
 import { cleanName, shortName } from './logtags.mjs'
@@ -81,39 +81,16 @@ export function retagged(meta) {
 }
 
 /**
- * The Crewlog event fields for a meta (spec section 2): always kind, the rest
- * for event games. match_source rides along either way.
+ * The optional set fields Crewlog takes with a game: set_id, game_in_set,
+ * match_source (only the valid ones).
  */
-export function eventFields(meta) {
+export function setFields(meta) {
   const f = {}
-  if (meta.event && cleanEvent(meta.event)) {
-    f.kind = 'event'
-    f.event = cleanEvent(meta.event)
-    if (meta.set?.id && ID_RE.test(meta.set.id)) f.set_id = meta.set.id
-    if (Number.isInteger(meta.set?.game) && meta.set.game >= 1 && meta.set.game <= 9) f.game_in_set = meta.set.game
-  } else f.kind = 'sim'
+  if (meta.set?.id && ID_RE.test(meta.set.id)) f.set_id = meta.set.id
+  if (f.set_id && Number.isInteger(meta.set?.game) && meta.set.game >= 1 && meta.set.game <= 9) f.game_in_set = meta.set.game
   if (meta.match?.source === 'queue' || meta.match?.source === 'private') f.match_source = meta.match.source
   return f
 }
-
-/** Where a game should be filed: 'event:<client_id>' or 'sim'. */
-export const wantedFiling = (meta) => (meta.event && cleanEvent(meta.event) ? `event:${meta.event.client_id}` : 'sim')
-
-/**
- * Logged games whose Crewlog filing differs from what the user wants now
- * (tagged after the fact, or logged before the server knew events).
- */
-export function needsRetag(metas) {
-  return metas.filter((m) => {
-    const c = m.crewlog
-    if (!c?.filed || !c.gameId) return false
-    const want = wantedFiling(m)
-    return c.filed !== want && c.failedFor !== want
-  })
-}
-
-/** Where a logged game ended up, from the server's kind and the fields sent. */
-export const filedAs = (kind, sent) => (kind === 'event' && sent?.event?.client_id ? `event:${sent.event.client_id}` : 'sim')
 
 /** Events seen in the library, newest first: [{ client_id, name, games, lastAt }]. */
 export function knownEvents(metas, current = null) {

@@ -26,6 +26,10 @@ contextBridge.exposeInMainWorld('recorder', {
   crewlogCheck: () => ipcRenderer.invoke('crewlog:check'),
   crewlogForget: () => ipcRenderer.invoke('crewlog:forget'),
   crewlogOpen: (url) => ipcRenderer.invoke('crewlog:open', url),
+  crewlogEvents: () => ipcRenderer.invoke('crewlog:events'),
+  crewlogPick: (id) => ipcRenderer.invoke('crewlog:pick', id),
+  crewlogSetLogging: (on) => ipcRenderer.invoke('crewlog:setLogging', on),
+  crewlogWaiting: (what) => ipcRenderer.invoke('crewlog:waiting', what),
   onEvent: (cb) => {
     const l = (_e, ev) => cb(ev)
     ipcRenderer.on('app:event', l)
