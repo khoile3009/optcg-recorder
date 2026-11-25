@@ -4,7 +4,7 @@ Records your OPTCG Sim games automatically, tags each one from the sim's combat 
 (your leader, the opponent's leader, going 1st/2nd, win/loss), and lets you search,
 filter and rewatch them.
 
-![Library and player](docs/screenshot.png)
+![Library and player](docs/screenshot.webp)
 
 <details>
 <summary>Filter by leader</summary>
