@@ -456,24 +456,29 @@ function renderEventPicker() {
   else
     list.replaceChildren(
       ...ev.list.map((row) => {
-        const b = el('button', `pickRow${pick?.id === row.id ? ' on' : ''}`)
+        const on = !!c.logging && pick?.id === row.id
+        const b = el('button', `pickRow${on ? ' on' : ''}`)
         b.type = 'button'
         b.setAttribute('role', 'option')
-        b.setAttribute('aria-selected', String(pick?.id === row.id))
+        b.setAttribute('aria-selected', String(on))
+        b.title = on ? 'Click again to stop adding games' : `Add finished games to ${row.name}`
         const top = el('div', 'pickTop')
         top.append(el('span', 'pickName', row.name), el('span', `pickKind ${row.kind}`, KIND_LABEL[row.kind] ?? row.kind))
         const bits = [`${row.wins}-${row.losses}`]
         if (row.played_on) bits.push(row.played_on)
         bits.push(leaderLabel(row.my_leader))
         b.append(top, el('div', 'pickMeta hint', bits.join(' · ')))
-        b.onclick = () => pickDo(api.crewlogPick(row.id))
+        // Clicking the active event again stops logging and clears the pick.
+        b.onclick = () => pickDo(api.crewlogPick(on ? null : row.id))
         return b
       }),
     )
 
-  $('pickLogging').checked = !!c.logging
-  $('pickLogging').disabled = !pick
-  $('pickLoggingText').textContent = pick ? `Add finished games to ${pick.name}` : 'Pick an event to add games'
+  $('pickHelp').textContent = !ev.list?.length
+    ? ''
+    : c.logging
+      ? `Adding finished games to ${pick.name}. Click it again to stop.`
+      : 'Click an event to add finished games to it.'
 
   const waiting = c.waiting ?? 0
   $('pickWaiting').hidden = !waiting
@@ -517,7 +522,6 @@ $('pickFetch').onclick = async () => {
     renderEventPicker()
   }
 }
-$('pickLogging').onchange = (e) => pickDo(api.crewlogSetLogging(e.target.checked))
 $('pickSend').onclick = () => pickDo(api.crewlogWaiting('send'))
 $('pickDiscard').onclick = () => {
   const n = status?.crewlog?.waiting ?? 0

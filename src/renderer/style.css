@@ -1829,12 +1829,8 @@ main {
 .pickMeta {
   margin-top: 2px;
 }
-.pickToggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  cursor: pointer;
+.pickHelp:empty {
+  display: none;
 }
 .pickWaiting {
   display: flex;
