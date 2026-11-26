@@ -897,7 +897,14 @@ function dashGrid(rows) {
     top.append(avatar(s.leaderId, 'xs'), name, el('div', `lPct ${tone(p)}`, p == null ? '–' : `${p}%`))
     const sub = el('div', 'lSub')
     sub.append(el('span', null, `${s.games} game${s.games === 1 ? '' : 's'} · ${s.wins}–${s.losses}`), formEl(s.form))
-    c.append(top, winBar(s.wins, s.losses), sub)
+    const split = el('div', 'lSplit')
+    const half = (label, r) => {
+      const d = el('span')
+      d.append(el('span', 'hint', label), rateEl(r.wins, r.losses, 'rate inline'))
+      return d
+    }
+    split.append(half('1st', s.first), half('2nd', s.second))
+    c.append(top, winBar(s.wins, s.losses), sub, split)
     c.title = `Last played ${dayLabel(new Date(s.lastPlayed))}`
     c.onclick = () => {
       dashSel = s.leaderId
@@ -944,6 +951,15 @@ function dashDetail(s) {
 
 // One row per opponent, best first: a bar grows right (winning) or left (losing)
 // from the 50% line. Thin samples (under 3 decided games) are drawn faded.
+// A going-1st / going-2nd cell: win rate, then the record in small print.
+function sideEl(r) {
+  const d = el('span', 'spSide')
+  const p = pctOf(r.wins, r.losses)
+  if (p == null) return d.append(el('span', 'na', '–')), d
+  d.append(el('b', tone(p), `${p}%`), el('small', null, `${r.wins}–${r.losses}`))
+  return d
+}
+
 function spreadEl(s) {
   const box = el('div', 'spread')
   if (!s.matchups.length) return box.append(el('div', 'hint', 'No opponent leaders recorded yet.')), box
@@ -953,7 +969,7 @@ function spreadEl(s) {
   const axis = el('div', 'spRow spAxis')
   const ticks = el('span', 'spTicks')
   ticks.append(el('span', null, '0%'), el('span', null, '50%'), el('span', null, '100%'))
-  axis.append(el('span'), ticks, el('span'), el('span'))
+  axis.append(el('span'), ticks, el('span', 'spPct', 'All'), el('span', 'spRec'), el('span', 'spSide', 'Going 1st'), el('span', 'spSide', 'Going 2nd'))
   box.append(axis)
   for (const { m, p } of rows) {
     const b = el('button', 'spRow')
@@ -967,9 +983,9 @@ function spreadEl(s) {
       bar.style.width = `${Math.abs(p - 50)}%`
       track.append(bar)
     }
-    const side = (r) => (r.wins + r.losses ? `${pctOf(r.wins, r.losses)}% (${r.wins}–${r.losses})` : '–')
-    b.title = `vs ${LEADER.get(m.leaderId)?.name ?? m.leaderId}: ${m.wins}–${m.losses} in ${m.games} game${m.games === 1 ? '' : 's'}\nGoing 1st ${side(m.first)} · going 2nd ${side(m.second)}\nClick to show these games`
-    b.append(name, track, el('b', `spPct ${tone(p)}`, p == null ? '–' : `${p}%`), el('span', 'spRec', `${m.wins}–${m.losses}`))
+    b.title = `vs ${LEADER.get(m.leaderId)?.name ?? m.leaderId}: ${m.wins}–${m.losses} in ${m.games} game${m.games === 1 ? '' : 's'}
+Click to show these games`
+    b.append(name, track, el('b', `spPct ${tone(p)}`, p == null ? '–' : `${p}%`), el('span', 'spRec', `${m.wins}–${m.losses}`), sideEl(m.first), sideEl(m.second))
     b.onclick = () => showLeaderGames(s.leaderId, m.leaderId)
     box.append(b)
   }

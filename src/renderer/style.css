@@ -2021,7 +2021,7 @@ main {
 }
 .spRow {
   display: grid;
-  grid-template-columns: minmax(0, 180px) minmax(0, 1fr) 40px 44px;
+  grid-template-columns: minmax(0, 180px) minmax(0, 1fr) 40px 44px 72px 72px;
   align-items: center;
   gap: 10px;
   padding: 3px 4px;
@@ -2092,6 +2092,34 @@ button.spRow:hover {
 .spRec {
   color: var(--text2);
   font-size: 11px;
+}
+.spSide {
+  text-align: right;
+  white-space: nowrap;
+}
+.spSide b {
+  font-weight: 600;
+}
+.spSide small {
+  margin-left: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.spAxis .spSide,
+.spAxis .spPct {
+  font-weight: 400;
+}
+.spRow.thin .spSide {
+  opacity: 0.6;
+}
+.lSplit {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.lSplit .hint {
+  margin-right: 4px;
 }
 .spAxis {
   padding-bottom: 2px;
@@ -2199,10 +2227,14 @@ button.spRow:hover {
   .ddStats {
     grid-template-columns: repeat(3, 1fr);
   }
+}
+/* The spread sits beside the game list, so it runs out of room well before the window does. */
+@media (max-width: 1100px) {
   .spRow {
-    grid-template-columns: minmax(0, 120px) minmax(0, 1fr) 36px;
+    grid-template-columns: minmax(0, 120px) minmax(0, 1fr) 36px 56px 56px;
   }
-  .spRec {
+  .spRec,
+  .spSide small {
     display: none;
   }
 }
