@@ -25,6 +25,7 @@ import { LEADERS as BUNDLED_LEADERS } from './data/leaders.mjs'
 import { installUpdate, startUpdateChecks } from './updater.mjs'
 import { libDirProblem, moveRecordings, recordingIds, writableProblem } from './libmove.mjs'
 import { CODE_RE, DEFAULT_BASE, LEGACY_BASE, buildGame, createCrewlog, eventBody, localDate, normalizeBase } from './crewlog.mjs'
+import { SIM_DIR_RE, simSearchRoots } from './simdirs.mjs'
 import { cleanEvent, cleanEventName, knownEvents, newClientId, retagged, setFields, setFor, validClientId } from './events.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -38,6 +39,8 @@ const TAIL_MS = 4000
 const AUTOSAVED = path.join('Builds_Windows', 'CombatLogs', 'AutoSaved')
 
 const userData = app.getPath('userData')
+// Electron's 'loopback' audio (the whole system mix) exists only on Windows.
+const SYSTEM_AUDIO = process.platform === 'win32'
 const defaultLibDir = path.join(userData, 'recordings')
 /** The recordings folder: settings.libDir when the user picked one. Set after settings load. */
 let libDir = defaultLibDir
@@ -97,11 +100,16 @@ settings.event = cleanEvent(settings.event)
 
 // ─── Sim folder ───────────────────────────────────────────────────────────
 
-/** OPTCG Sim unpacks to folders like `1.31a_Windows`; the newest one wins. */
+/**
+ * OPTCG Sim unpacks to folders like `1.31a_Windows`; the newest one wins. On Linux
+ * this also walks Wine prefixes, so the answer is cached for a few seconds:
+ * status() asks on every refresh until a folder is confirmed.
+ */
+let detected = { at: 0, dir: null }
 function detectSourceDir() {
-  const roots = [os.homedir(), path.join(os.homedir(), 'Downloads'), path.join(os.homedir(), 'Desktop')]
+  if (Date.now() - detected.at < 10_000) return detected.dir
   const found = []
-  for (const root of roots) {
+  for (const root of simSearchRoots({ home: os.homedir() })) {
     let names = []
     try {
       names = fs.readdirSync(root)
@@ -109,13 +117,14 @@ function detectSourceDir() {
       continue
     }
     for (const n of names) {
-      if (!/^\d+\.\d+\w*_Windows$/i.test(n)) continue
+      if (!SIM_DIR_RE.test(n)) continue
       const dir = path.join(root, n, AUTOSAVED)
       if (fs.existsSync(dir)) found.push({ dir, mtime: fs.statSync(dir).mtimeMs })
     }
   }
   found.sort((a, b) => b.mtime - a.mtime)
-  return found[0]?.dir ?? null
+  detected = { at: Date.now(), dir: found[0]?.dir ?? null }
+  return detected.dir
 }
 
 /** Only a folder the user confirmed: nothing is watched until they pick one. */
@@ -330,7 +339,7 @@ async function beginVideo(cur) {
     fps: q.fps,
     height: q.height,
     bitrate: q.mbps * 1_000_000,
-    systemAudio: !!settings.systemAudio,
+    systemAudio: SYSTEM_AUDIO && !!settings.systemAudio,
     mic: settings.mic ? { deviceId: settings.micDevice || 'default', gain: settings.micGain ?? 1 } : null,
   })
 }
@@ -665,7 +674,8 @@ function status() {
     onGameStart: settings.onGameStart,
     capture: settings.capture,
     quality: settings.quality,
-    systemAudio: !!settings.systemAudio,
+    systemAudio: SYSTEM_AUDIO && !!settings.systemAudio,
+    systemAudioSupported: SYSTEM_AUDIO,
     mic: !!settings.mic,
     micDevice: settings.micDevice || 'default',
     micGain: settings.micGain ?? 1,
@@ -690,9 +700,29 @@ const crewlogBase = () => {
   return !base || base === LEGACY_BASE ? DEFAULT_BASE : base
 }
 const crewlogHasCode = () => fs.existsSync(crewlogKeyPath)
+
+/**
+ * Real OS-backed encryption only. On Linux with no keyring running (GNOME Keyring,
+ * KWallet), safeStorage still "works" with a hard-coded key ('basic_text'), which
+ * is plain text in all but name, so that counts as unavailable.
+ */
+function secureStorageOk() {
+  if (!safeStorage.isEncryptionAvailable()) return false
+  if (process.platform !== 'linux') return true
+  try {
+    return safeStorage.getSelectedStorageBackend() !== 'basic_text'
+  } catch {
+    return false
+  }
+}
+const NO_SECURE_STORAGE =
+  process.platform === 'linux'
+    ? 'No system keyring (GNOME Keyring or KWallet) is running, so the code could not be stored securely and was not saved.'
+    : "This PC can't store the code securely, so it wasn't saved."
+
 function crewlogCode() {
   try {
-    if (!safeStorage.isEncryptionAvailable()) return null
+    if (!secureStorageOk()) return null
     return safeStorage.decryptString(fs.readFileSync(crewlogKeyPath))
   } catch {
     return null
@@ -901,7 +931,7 @@ ipcMain.handle('crewlog:set', async (_e, patch = {}) => {
   const code = String(patch.code ?? '').trim()
   if (code) {
     if (!CODE_RE.test(code)) return { ok: false, error: 'A connector code is crw_ followed by 40 letters and digits.' }
-    if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: "This PC can't store the code securely, so it wasn't saved." }
+    if (!secureStorageOk()) return { ok: false, error: NO_SECURE_STORAGE }
     await fsp.writeFile(crewlogKeyPath, safeStorage.encryptString(code))
   }
   crewlog.reset()
@@ -1216,7 +1246,7 @@ else {
     session.defaultSession.setDisplayMediaRequestHandler(async (req, callback) => {
       try {
         const video = await pickSource()
-        callback(req.audioRequested && settings.systemAudio ? { video, audio: 'loopback' } : { video })
+        callback(req.audioRequested && SYSTEM_AUDIO && settings.systemAudio ? { video, audio: 'loopback' } : { video })
       } catch {
         callback({})
       }

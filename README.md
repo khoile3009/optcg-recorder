@@ -15,7 +15,7 @@ filter and rewatch them.
 
 ## Download
 
-**[⬇ Download the latest release](https://github.com/khoile3009/optcg-recorder/releases/latest)** (Windows)
+**[⬇ Download the latest release](https://github.com/khoile3009/optcg-recorder/releases/latest)** (Windows, Linux)
 
 The release page has two files; either works:
 
@@ -49,6 +49,26 @@ Keyboard shortcuts in the player:
 Above the filters, **Matchups** shows your win rate against each opposing leader,
 overall and split by going 1st and 2nd. It follows the current filters, so pick your
 leader first to see that deck's matchups. Click a row to show only those games.
+
+### Linux
+
+Download **`OPTCG-Recorder-<version>-x86_64.AppImage`**, make it executable
+(`chmod +x OPTCG-Recorder-*.AppImage`) and run it. OPTCG Sim itself has no Linux build,
+so run its Windows build under Wine, Bottles, Lutris or Steam (as a non-Steam game with
+Proton). The recorder looks for the sim folder inside those prefixes; if it doesn't
+find it, pick the `1.31a_Windows` folder by hand.
+
+Differences from Windows:
+
+- **No game sound.** Only Windows lets an app record the system's audio output; the
+  microphone still works.
+- **Wayland:** the recorder runs through XWayland, so it can see the sim's window
+  directly. On a pure Wayland session your desktop may ask you to pick the window
+  once when recording starts.
+- **Crewlog code** needs a system keyring (GNOME Keyring or KWallet). Without one the
+  app refuses to save the code rather than storing it in plain text.
+- The AppImage updates itself like the Windows installer. Recordings live in
+  `~/.config/optcg-recorder/recordings`.
 
 ### Updates
 

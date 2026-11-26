@@ -123,6 +123,10 @@ function renderStatus() {
     off: 'Auto is off. Press Record now to capture a game. Finished games appear on the left.',
   }[mode]
   $('sysAudio').checked = !!status.systemAudio
+  if (status.systemAudioSupported === false) {
+    $('sysAudio').disabled = true
+    $('sysAudioHint').textContent = "Not available on this system: only Windows lets apps record the game's sound. The microphone still works."
+  }
   $('micOn').checked = !!status.mic
   $('micOpts').hidden = !status.mic
   if (document.activeElement !== $('micGain')) $('micGain').value = status.micGain ?? 1

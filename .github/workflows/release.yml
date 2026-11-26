@@ -1,6 +1,7 @@
-# Push a tag like v0.1.0 and this builds the Windows installer + portable exe
+# Push a tag like v0.1.0 and this builds the Windows installer + portable exe and
+# the Linux AppImage,
 # and attaches them to a GitHub Release for that tag. latest.yml + the blockmap are
-# what installed copies read to auto-update.
+# what installed copies read to auto-update (latest-linux.yml for the AppImage).
 name: Release
 
 on:
@@ -32,3 +33,23 @@ jobs:
             dist/OPTCG-Recorder-*-portable.exe
             dist/OPTCG-Recorder-Setup-*.exe.blockmap
             dist/latest.yml
+
+  # Runs after windows so that job creates the release and its notes; this one adds to it.
+  linux:
+    needs: windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npx electron-builder --linux --publish never
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/OPTCG-Recorder-*-x86_64.AppImage
+            dist/latest-linux.yml
