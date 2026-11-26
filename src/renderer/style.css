@@ -1919,3 +1919,290 @@ main {
   flex: 1;
   min-width: 0;
 }
+
+/* ---------- leader dashboard ---------- */
+#dashBtn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.dash {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.dash[hidden] {
+  display: none;
+}
+.dashHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.dashHead h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.dashSub {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.dash .good {
+  color: var(--win);
+}
+.dash .bad {
+  color: var(--loss);
+}
+.dash .na {
+  color: var(--muted);
+}
+.dashDetail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+.ddHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ddTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ddTitle h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.ddStats {
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+.ddStats .stat {
+  padding: 6px 8px;
+}
+.ddStats .sv {
+  font-size: 15px;
+}
+.ddForm,
+.ddVs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.ddForm .form i {
+  width: 12px;
+  height: 12px;
+}
+.vsLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.vsName {
+  font-weight: 500;
+}
+.spread {
+  display: flex;
+  flex-direction: column;
+}
+.spRow {
+  display: grid;
+  grid-template-columns: minmax(0, 180px) minmax(0, 1fr) 40px 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+button.spRow {
+  cursor: pointer;
+}
+button.spRow:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.spRow .mName {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.spRow .mName b {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.spTrack {
+  position: relative;
+  height: 12px;
+}
+.spTrack::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--line2);
+}
+.spTrack i {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  min-width: 2px;
+}
+.spTrack i.up {
+  background: var(--win);
+  border-radius: 0 4px 4px 0;
+}
+.spTrack i.down {
+  background: var(--loss);
+  border-radius: 4px 0 0 4px;
+}
+.spRow.thin .spTrack i {
+  opacity: 0.4;
+}
+.spRow.thin .mName,
+.spRow.thin .spRec {
+  color: var(--muted);
+}
+.spPct {
+  text-align: right;
+  font-weight: 600;
+}
+.spRec {
+  color: var(--text2);
+  font-size: 11px;
+}
+.spAxis {
+  padding-bottom: 2px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.spTicks {
+  display: flex;
+  justify-content: space-between;
+}
+.dashGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+}
+.lcard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.lcard:hover {
+  border-color: var(--line2);
+  background: rgba(255, 255, 255, 0.05);
+}
+.lcard.on {
+  border-color: var(--accent);
+}
+.lTop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lName {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.lName b {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lName .hint {
+  font-size: 10px;
+}
+.lPct {
+  font-size: 15px;
+  font-weight: 700;
+}
+.winBar {
+  height: 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--loss) 55%, transparent);
+  overflow: hidden;
+}
+.winBar span {
+  display: block;
+  height: 100%;
+  background: var(--win);
+}
+.winBar.none {
+  background: var(--line2);
+}
+.lSub {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text2);
+}
+.rate b {
+  font-weight: 600;
+}
+.rate small {
+  margin-left: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.form {
+  display: inline-flex;
+  gap: 3px;
+}
+.form i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--loss);
+}
+.form i.w {
+  background: var(--win);
+}
+@media (max-width: 900px) {
+  .ddStats {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .spRow {
+    grid-template-columns: minmax(0, 120px) minmax(0, 1fr) 36px;
+  }
+  .spRec {
+    display: none;
+  }
+}

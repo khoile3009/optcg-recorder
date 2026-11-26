@@ -225,6 +225,58 @@ export function matchupStats(recs) {
     .sort((a, b) => b.games - a.games || b.wins + b.losses - (a.wins + a.losses) || a.leaderId.localeCompare(b.leaderId))
 }
 
+/**
+ * Dashboard numbers per leader I played, most-played first. Each entry is
+ * recordStats for that leader plus: `form` (results of the last `formSize`
+ * finished games, oldest first, 'W'|'L'), `streak` ({ result, n } from the most
+ * recent game back), `lastPlayed` (ISO), `avgTurns` (finished games that know
+ * their turn count), `matchups` (matchupStats of its games) and `best`/`worst`
+ * (the matchups with the highest/lowest win rate among those with at least
+ * `minMatchup` finished games; null when none qualify or only one does for worst).
+ */
+export function leaderStats(recs, { formSize = 10, minMatchup = 3 } = {}) {
+  const by = new Map()
+  for (const r of recs) {
+    const id = r.me?.leaderId
+    if (!id) continue
+    if (!by.has(id)) by.set(id, [])
+    by.get(id).push(r)
+  }
+  const time = (r) => Date.parse(r.startedAt) || 0
+  const rate = (m) => m.wins / (m.wins + m.losses)
+  return [...by]
+    .map(([leaderId, games]) => {
+      const sorted = [...games].sort((a, b) => time(a) - time(b))
+      const done = sorted.filter((r) => r.winnerSeat)
+      const form = done.slice(-formSize).map((r) => (r.winnerSeat === 1 ? 'W' : 'L'))
+      let streak = null
+      for (let i = done.length - 1; i >= 0; i--) {
+        const res = done[i].winnerSeat === 1 ? 'W' : 'L'
+        if (!streak) streak = { result: res, n: 1 }
+        else if (streak.result === res) streak.n++
+        else break
+      }
+      const counted = done.filter((r) => r.turns > 0)
+      const avgTurns = counted.length ? counted.reduce((n, r) => n + r.turns, 0) / counted.length : null
+      const matchups = matchupStats(games)
+      const ranked = matchups
+        .filter((m) => m.wins + m.losses >= minMatchup)
+        .sort((a, b) => rate(b) - rate(a) || b.wins + b.losses - (a.wins + a.losses))
+      return {
+        leaderId,
+        ...recordStats(games),
+        form,
+        streak,
+        lastPlayed: sorted.at(-1)?.startedAt ?? null,
+        avgTurns,
+        matchups,
+        best: ranked[0] ?? null,
+        worst: ranked.length > 1 ? ranked.at(-1) : null,
+      }
+    })
+    .sort((a, b) => b.games - a.games || (Date.parse(b.lastPlayed) || 0) - (Date.parse(a.lastPlayed) || 0) || a.leaderId.localeCompare(b.leaderId))
+}
+
 const EV_KEYS = { [btoa('Log.LeaderHit')]: 'hit', [btoa('Log.Destroyed')]: 'ko', [btoa('Log.UseTrigger')]: 'trigger' }
 const DON_KEY = btoa('Log.DrawDon')
 const b64text = (s) => {

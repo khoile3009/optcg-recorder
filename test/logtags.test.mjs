@@ -292,3 +292,46 @@ test('matchesFilters: kind, event and match source', () => {
   assert.ok(matchesFilters(sim, { source: 'queue' }))
   assert.ok(!matchesFilters(ev, { source: 'queue' }))
 })
+
+import { leaderStats } from '../src/logtags.mjs'
+
+test('leaderStats: per my leader, with form, streak, turns and best/worst matchups', () => {
+  let t = 0
+  const g = (me, opp, winnerSeat, firstSeat = 1, turns = 8) => ({
+    me: { leaderId: me },
+    opp: { leaderId: opp },
+    winnerSeat,
+    firstSeat,
+    turns,
+    startedAt: new Date(Date.UTC(2026, 0, 1, 0, t++)).toISOString(),
+  })
+  const recs = [
+    g('OP01-001', 'OP02-001', 1),
+    g('OP01-001', 'OP02-001', 1, 2),
+    g('OP01-001', 'OP02-001', 2),
+    g('OP01-001', 'OP03-001', 2, 2, 10),
+    g('OP01-001', 'OP03-001', 2),
+    g('OP01-001', 'OP03-001', 2),
+    g('OP01-001', 'OP04-001', 1),
+    g('OP01-001', 'OP04-001', null, 1, 0), // unfinished: counted as a game, no result
+    g('OP05-001', 'OP01-001', 1),
+    { me: {}, opp: { leaderId: 'OP01-001' }, winnerSeat: 1 }, // no leader: skipped
+  ]
+  const [a, b, ...rest] = leaderStats(recs.reverse(), { formSize: 5 })
+  assert.equal(rest.length, 0)
+  assert.equal(a.leaderId, 'OP01-001')
+  assert.deepEqual([a.games, a.wins, a.losses], [8, 3, 4])
+  assert.deepEqual(a.first, { wins: 2, losses: 3 })
+  assert.deepEqual(a.second, { wins: 1, losses: 1 })
+  assert.deepEqual(a.form, ['L', 'L', 'L', 'L', 'W']) // oldest first, input order ignored
+  assert.deepEqual(a.streak, { result: 'W', n: 1 })
+  assert.equal(a.avgTurns, (8 * 6 + 10) / 7)
+  assert.equal(a.best.leaderId, 'OP02-001')
+  assert.equal(a.worst.leaderId, 'OP03-001')
+  assert.equal(a.matchups.length, 3)
+  assert.equal(a.lastPlayed, new Date(Date.UTC(2026, 0, 1, 0, 7)).toISOString())
+  assert.equal(b.leaderId, 'OP05-001')
+  assert.equal(b.best, null) // under minMatchup finished games
+  assert.equal(b.worst, null)
+  assert.equal(leaderStats([g('OP06-001', 'OP02-001', 1), g('OP06-001', 'OP02-001', 1), g('OP06-001', 'OP02-001', 2)])[0].worst, null)
+})

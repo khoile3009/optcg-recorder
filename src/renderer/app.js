@@ -1,4 +1,4 @@
-import { matchesFilters, matchupStats, recordStats, shortName } from '../logtags.mjs'
+import { leaderStats, matchesFilters, matchupStats, recordStats, shortName } from '../logtags.mjs'
 import { LEADERS as BUNDLED_LEADERS } from '../data/leaders.mjs'
 
 const api = window.recorder
@@ -801,9 +801,181 @@ $('matchups').ontoggle = () => {
   } catch {}
 }
 
+// ─── Leader dashboard ─────────────────────────────────────────────────────
+// Every leader I played, over the games the other filters let through. The
+// my-leader and result filters are ignored here: the dashboard is the comparison.
+
+let dashOpen = false
+let dashSel = null
+
+const pctOf = (w, l) => (w + l ? Math.round((100 * w) / (w + l)) : null)
+const tone = (p) => (p == null ? 'na' : p >= 55 ? 'good' : p <= 45 ? 'bad' : '')
+function rateEl(w, l, cls = 'rate') {
+  const p = pctOf(w, l)
+  const d = el('span', cls)
+  d.append(el('b', tone(p), p == null ? '–' : `${p}%`), el('small', null, `${w}–${l}`))
+  return d
+}
+function formEl(form) {
+  const d = el('span', 'form')
+  for (const f of form) d.append(el('i', f === 'W' ? 'w' : 'l'))
+  d.title = form.length ? `Last ${form.length}, oldest first: ${form.join(' ')}` : 'No finished games'
+  return d
+}
+function winBar(w, l) {
+  const d = el('div', 'winBar')
+  const fill = el('span')
+  fill.style.width = w + l ? `${(100 * w) / (w + l)}%` : '0'
+  d.append(fill)
+  if (!(w + l)) d.classList.add('none')
+  return d
+}
+function vsLine(label, m) {
+  const d = el('div', 'vsLine')
+  if (!m) return d.append(el('span', 'hint', `${label} matchup: needs 3+ finished games vs one leader`)), d
+  d.append(el('span', 'hint', label), avatar(m.leaderId, 'xs'), el('span', 'vsName', LEADER.get(m.leaderId)?.name ?? m.leaderId), rateEl(m.wins, m.losses, 'rate inline'))
+  return d
+}
+
+function openDash(on = !dashOpen) {
+  dashOpen = on
+  $('dashBtn').classList.toggle('on', dashOpen)
+  if (dashOpen) {
+    selId = null
+    video.pause()
+    video.removeAttribute('src')
+    $('detail').hidden = true
+  }
+  $('empty').hidden = dashOpen || !!selId
+  $('dash').hidden = !dashOpen
+  renderList()
+}
+$('dashBtn').onclick = () => openDash()
+
+function showLeaderGames(me, opp) {
+  filters.me = [me]
+  filters.opp = opp ? [opp] : []
+  openDash(false)
+  renderAll()
+}
+
+function renderDash() {
+  const pool = recs.filter((r) => matchesFilters(r, { ...filters, me: [], result: '' }))
+  const rows = leaderStats(pool)
+  if (!rows.some((r) => r.leaderId === dashSel)) dashSel = rows[0]?.leaderId ?? null
+  const narrowed = filters.order || filters.kind || filters.event || filters.starred || filters.misplays || filters.opp.length || filters.userTags.length || filters.text
+  const head = el('div', 'dashHead')
+  head.append(
+    el('h2', null, 'Leaders'),
+    el('span', 'hint', `${pool.length} game${pool.length === 1 ? '' : 's'} · ${rows.length} leader${rows.length === 1 ? '' : 's'}${narrowed ? ' · filtered' : ''}`),
+    el('div', 'grow'),
+  )
+  const close = el('button', 'icon', '✕')
+  close.title = 'Close the dashboard'
+  close.onclick = () => openDash(false)
+  head.append(close)
+  if (!rows.length) {
+    $('dash').replaceChildren(head, el('div', 'emptyList', recs.length ? 'No games match these filters.' : 'No recordings yet. Play a game in OPTCG Sim!'))
+    return
+  }
+  const sel = rows.find((r) => r.leaderId === dashSel)
+  $('dash').replaceChildren(head, dashDetail(sel), el('div', 'dashSub', 'All leaders'), dashGrid(rows))
+}
+
+function dashGrid(rows) {
+  const grid = el('div', 'dashGrid')
+  for (const s of rows) {
+    const c = el('button', `lcard${s.leaderId === dashSel ? ' on' : ''}`)
+    const top = el('div', 'lTop')
+    const name = el('div', 'lName')
+    name.append(el('b', null, LEADER.get(s.leaderId)?.name ?? s.leaderId), el('span', 'hint', s.leaderId))
+    const p = pctOf(s.wins, s.losses)
+    top.append(avatar(s.leaderId, 'xs'), name, el('div', `lPct ${tone(p)}`, p == null ? '–' : `${p}%`))
+    const sub = el('div', 'lSub')
+    sub.append(el('span', null, `${s.games} game${s.games === 1 ? '' : 's'} · ${s.wins}–${s.losses}`), formEl(s.form))
+    c.append(top, winBar(s.wins, s.losses), sub)
+    c.title = `Last played ${dayLabel(new Date(s.lastPlayed))}`
+    c.onclick = () => {
+      dashSel = s.leaderId
+      renderDash()
+      $('viewer').scrollTo({ top: 0, behavior: 'smooth' })
+    }
+    grid.append(c)
+  }
+  return grid
+}
+
+function dashDetail(s) {
+  const box = el('div', 'dashDetail')
+  const head = el('div', 'ddHead')
+  const t = el('div', 'ddTitle')
+  t.append(el('h3', null, LEADER.get(s.leaderId)?.name ?? s.leaderId), el('span', 'hint', `${s.leaderId} · last played ${dayLabel(new Date(s.lastPlayed))}`))
+  const show = el('button', null, 'Show these games')
+  show.onclick = () => showLeaderGames(s.leaderId)
+  head.append(avatar(s.leaderId, 'sm', false), t, el('div', 'grow'), show)
+  const stat = (label, value, sub, cls) => {
+    const d = el('div', 'stat')
+    d.append(el('div', `sv ${cls ?? ''}`, value), el('div', 'sl', label))
+    if (sub) d.append(el('div', 'ss', sub))
+    return d
+  }
+  const p = (r) => pctOf(r.wins, r.losses)
+  const fmtP = (r) => (p(r) == null ? '–' : `${p(r)}%`)
+  const tiles = el('div', 'stats ddStats')
+  tiles.append(
+    stat('Games', String(s.games), `${s.wins}W ${s.losses}L`),
+    stat('Win rate', fmtP(s), null, tone(p(s))),
+    stat('Going 1st', fmtP(s.first), `${s.first.wins}–${s.first.losses}`, tone(p(s.first))),
+    stat('Going 2nd', fmtP(s.second), `${s.second.wins}–${s.second.losses}`, tone(p(s.second))),
+    stat('Streak', s.streak ? `${s.streak.result}${s.streak.n}` : '–', null, s.streak ? (s.streak.result === 'W' ? 'good' : 'bad') : ''),
+    stat('Avg turns', s.avgTurns == null ? '–' : s.avgTurns.toFixed(1)),
+  )
+  const formRow = el('div', 'ddForm')
+  formRow.append(el('span', 'hint', `Last ${s.form.length}`), formEl(s.form))
+  const vs = el('div', 'ddVs')
+  vs.append(vsLine('Best', s.best), vsLine('Worst', s.worst))
+  box.append(head, tiles, formRow, vs, el('div', 'dashSub', 'Matchup spread'), spreadEl(s))
+  return box
+}
+
+// One row per opponent, best first: a bar grows right (winning) or left (losing)
+// from the 50% line. Thin samples (under 3 decided games) are drawn faded.
+function spreadEl(s) {
+  const box = el('div', 'spread')
+  if (!s.matchups.length) return box.append(el('div', 'hint', 'No opponent leaders recorded yet.')), box
+  const rows = s.matchups
+    .map((m) => ({ m, p: pctOf(m.wins, m.losses) }))
+    .sort((a, b) => (b.p ?? -1) - (a.p ?? -1) || b.m.games - a.m.games)
+  const axis = el('div', 'spRow spAxis')
+  const ticks = el('span', 'spTicks')
+  ticks.append(el('span', null, '0%'), el('span', null, '50%'), el('span', null, '100%'))
+  axis.append(el('span'), ticks, el('span'), el('span'))
+  box.append(axis)
+  for (const { m, p } of rows) {
+    const b = el('button', 'spRow')
+    if (m.wins + m.losses < 3) b.classList.add('thin')
+    const name = el('span', 'mName')
+    name.append(avatar(m.leaderId, 'xs'), el('b', null, LEADER.get(m.leaderId)?.name ?? m.leaderId))
+    const track = el('span', 'spTrack')
+    if (p != null) {
+      const bar = el('i', p >= 50 ? 'up' : 'down')
+      bar.style.left = `${Math.min(p, 50)}%`
+      bar.style.width = `${Math.abs(p - 50)}%`
+      track.append(bar)
+    }
+    const side = (r) => (r.wins + r.losses ? `${pctOf(r.wins, r.losses)}% (${r.wins}–${r.losses})` : '–')
+    b.title = `vs ${LEADER.get(m.leaderId)?.name ?? m.leaderId}: ${m.wins}–${m.losses} in ${m.games} game${m.games === 1 ? '' : 's'}\nGoing 1st ${side(m.first)} · going 2nd ${side(m.second)}\nClick to show these games`
+    b.append(name, track, el('b', `spPct ${tone(p)}`, p == null ? '–' : `${p}%`), el('span', 'spRec', `${m.wins}–${m.losses}`))
+    b.onclick = () => showLeaderGames(s.leaderId, m.leaderId)
+    box.append(b)
+  }
+  return box
+}
+
 function renderList() {
   const shown = recs.filter((r) => matchesFilters(r, filters))
   renderStats(shown)
+  if (dashOpen) renderDash()
   $('count').textContent = anyFilter() ? `${shown.length} of ${recs.length} games` : `${recs.length} games`
   const out = []
   let last = ''
@@ -886,7 +1058,12 @@ const video = $('video')
 function select(id) {
   selId = id
   const r = recs.find((x) => x.id === id)
-  $('empty').hidden = !!r
+  if (r && dashOpen) {
+    dashOpen = false
+    $('dashBtn').classList.remove('on')
+    $('dash').hidden = true
+  }
+  $('empty').hidden = !!r || dashOpen
   $('detail').hidden = !r
   if (r) renderDetail(r, true)
   else video.removeAttribute('src')
