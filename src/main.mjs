@@ -26,6 +26,7 @@ import { installUpdate, startUpdateChecks } from './updater.mjs'
 import { libDirProblem, moveRecordings, recordingIds, writableProblem } from './libmove.mjs'
 import { CODE_RE, DEFAULT_BASE, LEGACY_BASE, buildGame, createCrewlog, eventBody, localDate, normalizeBase } from './crewlog.mjs'
 import { SIM_DIR_RE, simSearchRoots } from './simdirs.mjs'
+import { DEFAULT_RETENTION_DAYS, RETENTION_DAYS, cleanRetention, pickExpired } from './retention.mjs'
 import { cleanEvent, cleanEventName, knownEvents, newClientId, retagged, setFields, setFor, validClientId } from './events.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -88,6 +89,8 @@ let settings = {
   mic: false,
   micDevice: 'default',
   micGain: 1,
+  // New installs drop videos after 30 days; an upgrade keeps everything until the user picks.
+  retentionDays: fs.existsSync(settingsPath) ? null : DEFAULT_RETENTION_DAYS,
   ...readJson(settingsPath, {}),
 }
 const saveSettings = () => writeJson(settingsPath, settings)
@@ -233,6 +236,37 @@ function listRecordings() {
     if (m?.id) out.push(withUrls(m))
   }
   return out.sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''))
+}
+
+// ─── Retention ────────────────────────────────────────────────────────────
+// "Keep videos" removes only the .webm of old games: meta and log stay, so the
+// game keeps its stats and turn log. Starred and misplay-noted games are kept.
+
+const SWEEP_MS = 6 * 60 * 60 * 1000
+let sweeping = false
+async function sweepVideos() {
+  const days = cleanRetention(settings.retentionDays)
+  if (!days || sweeping || libMoving) return
+  sweeping = true
+  let n = 0
+  try {
+    for (const m of pickExpired(listRecordings(), { days, activeId: rec?.id })) {
+      if (libMoving || rec?.id === m.id) break
+      try {
+        await fsp.rm(path.join(libDir, `${m.id}.webm`), { force: true })
+        const cur = readJson(metaPath(m.id), null)
+        if (cur) await writeJson(metaPath(m.id), { ...cur, videoPruned: true, videoPrunedAt: new Date().toISOString(), retentionDays: days })
+        n++
+      } catch {
+        /* locked or gone: try again next sweep */
+      }
+    }
+  } catch {
+    /* the folder is unavailable right now */
+  } finally {
+    sweeping = false
+  }
+  if (n) sendLibrary()
 }
 
 async function updateMeta(id, patch) {
@@ -487,6 +521,7 @@ async function finalize(cur) {
   meta.tags = retagged(meta)
   await writeJson(metaPath(cur.id), meta)
   sendLibrary()
+  void sweepVideos()
   if (Notification.isSupported())
     new Notification({ title: 'Game saved', body: `${meta.title}  (${Math.round(durationMs / 60000)} min)` }).show()
   if (finished && game && crewlogHasCode()) logToCrewlog(meta)
@@ -679,6 +714,8 @@ function status() {
     mic: !!settings.mic,
     micDevice: settings.micDevice || 'default',
     micGain: settings.micGain ?? 1,
+    retentionDays: cleanRetention(settings.retentionDays),
+    retentionOptions: RETENTION_DAYS,
     qualities: Object.entries(QUALITY).map(([key, q]) => ({ key, label: q.label, mbPerMin: Math.round((q.mbps * 60) / 8) })),
     recording: rec && { id: rec.id, startMs: rec.startMs, bytes: rec.bytes, manual: rec.manual, track: !!rec.track, turn: rec.turnAt.length, stopping: rec.stopping },
     lastError,
@@ -1081,7 +1118,9 @@ ipcMain.handle('app:setSettings', async (_e, patch) => {
   if (patch.mic != null) settings.mic = !!patch.mic
   if (patch.micDevice != null) settings.micDevice = String(patch.micDevice)
   if (patch.micGain != null && Number.isFinite(+patch.micGain)) settings.micGain = Math.min(3, Math.max(0, +patch.micGain))
+  if ('retentionDays' in patch) settings.retentionDays = cleanRetention(patch.retentionDays)
   await saveSettings()
+  if ('retentionDays' in patch) void sweepVideos()
   sendStatus()
   return status()
 })
@@ -1254,6 +1293,8 @@ else {
 
     ensureWatching()
     void refreshLeaders()
+    void sweepVideos()
+    setInterval(() => void sweepVideos(), SWEEP_MS)
     setInterval(() => {
       ensureWatching()
       void safeTick()

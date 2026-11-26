@@ -1,5 +1,6 @@
 import { leaderStats, matchesFilters, matchupStats, recordStats, shortName } from '../logtags.mjs'
 import { LEADERS as BUNDLED_LEADERS } from '../data/leaders.mjs'
+import { pickExpired } from '../retention.mjs'
 
 const api = window.recorder
 const $ = (id) => document.getElementById(id)
@@ -157,6 +158,10 @@ function renderStatus() {
   if (q.options.length !== status.qualities.length)
     q.replaceChildren(...status.qualities.map((x) => new Option(`${x.label} · ~${x.mbPerMin} MB/min`, x.key)))
   if (document.activeElement !== q) q.value = status.quality
+  const ret = $('retention')
+  if (ret.options.length !== status.retentionOptions.length + 1)
+    ret.replaceChildren(new Option('Forever', ''), ...status.retentionOptions.map((d) => new Option(`${d} days`, String(d))))
+  if (document.activeElement !== ret) ret.value = status.retentionDays ? String(status.retentionDays) : ''
   renderOnboard()
 }
 setInterval(renderStatus, 1000)
@@ -238,6 +243,17 @@ for (const b of $('gameStart').querySelectorAll('button'))
     renderStatus()
   }
 $('quality').onchange = (e) => api.setSettings({ quality: e.target.value })
+$('retention').onchange = (e) => {
+  const days = e.target.value ? +e.target.value : null
+  const gone = pickExpired(recs, { days, activeId: status.recording?.id })
+  const bytes = gone.reduce((s, r) => s + (r.size ?? 0), 0)
+  const what = `${gone.length === 1 ? '1 video' : `${gone.length} videos`}${bytes ? ` (${fmtSize(bytes)})` : ''}`
+  if (gone.length && !confirm(`Remove ${what} older than ${days} days now? Their results, stats and turn logs stay. Starred games and games with misplay notes keep their video.`)) {
+    e.target.value = status.retentionDays ? String(status.retentionDays) : ''
+    return
+  }
+  api.setSettings({ retentionDays: days })
+}
 $('capture').onfocus = loadSources
 $('capture').onchange = (e) => api.setSettings({ capture: e.target.value })
 $('folderBtn').onclick = async () => {
@@ -1148,16 +1164,19 @@ function renderDetail(r, fresh) {
   $('del').disabled = r.status === 'recording'
 
   const tracked = isTracked(r)
+  const pruned = !tracked && r.status !== 'recording' && !r.videoUrl && !!r.videoPruned
   const live = r.status === 'recording' || !r.videoUrl
   $('player').hidden = tracked
   $('trackedView').hidden = !tracked
   for (const id of ['speed', 'keysWrap']) $(id).hidden = tracked || live
   $('live').hidden = !live || tracked
-  $('live').classList.toggle('trk', !!r.tracked)
-  $('liveTitle').textContent = r.tracked ? 'Tracking this game' : 'Recording in progress'
+  $('live').classList.toggle('trk', !!r.tracked || pruned)
+  $('liveTitle').textContent = r.tracked ? 'Tracking this game' : pruned ? 'Video removed' : 'Recording in progress'
   $('liveText').textContent = r.tracked
     ? 'Result, turns and events are saved when it ends. No video.'
-    : 'The video becomes playable as soon as the game ends.'
+    : pruned
+      ? `Removed after ${r.retentionDays ?? 'the set number of'} days by Keep videos. The result, stats and turn log are kept. Star a game to keep its video.`
+      : 'The video becomes playable as soon as the game ends.'
   video.hidden = live || tracked
   renderTurns(r, live || tracked)
   renderEvents(r, live || tracked)
